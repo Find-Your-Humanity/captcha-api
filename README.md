@@ -1,9 +1,14 @@
+<<<<<<< HEAD
 <!-- # Backend - Captcha API
 
 `captcha-api` 백엔드 프로젝트 -->
 
 # Real Captcha API
 
+=======
+# Real Captcha API
+
+>>>>>>> origin/main
 Real Captcha 시스템의 **메인 백엔드 API 서비스**입니다. 실시간 사용자 행동 분석, ML 기반 봇 탐지, 그리고 적응형 캡차 결정을 담당합니다.
 
 ## 🚀 **주요 기능**
@@ -316,4 +321,8 @@ MIT License - 자세한 내용은 `LICENSE` 파일을 참조하세요.
 ---
 
 **Real Captcha API v2.0.0**  
+<<<<<<< HEAD
 © 2025 Find Your Humanity. All rights reserved.
+=======
+© 2025 Find Your Humanity. All rights reserved.
+>>>>>>> origin/main
