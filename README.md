@@ -312,7 +312,7 @@ from ml_service.src.behavior_analysis.inference_bot_detector import detect_bot
 ## 📄 **라이선스**
 
 MIT License - 자세한 내용은 `LICENSE` 파일을 참조하세요.
-   
+   네
 ---
 
 **Real Captcha API v2.0.0**  
