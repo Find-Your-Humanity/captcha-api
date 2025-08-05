@@ -16,7 +16,7 @@ jobs:
             - name: Set up Python
               uses: actions/setup-python@v4
               with:
-                  python-version: "3.9" 
+                  python-version: "3.9"
 
             - name: Install dependencies
               run: pip install -r requirements.txt
@@ -63,4 +63,4 @@ jobs:
                   git add deployment-captcha-api.yaml
                   git commit -m "Update captcha-api-backend image to ${{ github.sha }}" || echo "No changes to commit"
                   git push
-              working-directory: ./deploy-manifests # deploy-manifests 디렉토리에서 명령어 실행
+              working-directory: ./deploy-manifests/captcha-api-backend # deploy-manifests 디렉토리에서 명령어 실행
