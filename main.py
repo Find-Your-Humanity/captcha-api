@@ -7,6 +7,8 @@ import os
 import json
 import tempfile
 
+app = FastAPI()
+
 # ML 서비스 import를 위한 경로 추가
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
@@ -22,7 +24,6 @@ except ImportError as e:
     print("임시 로직을 사용합니다.")
     ML_SERVICE_AVAILABLE = False
 
-app = FastAPI()
 
 # 요청 모델 정의
 class CaptchaRequest(BaseModel):

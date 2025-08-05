@@ -1,0 +1,37 @@
+# Git / CI 관련
+.git
+.gitignore
+.github
+
+# Python 캐시 / 빌드 파일
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+*.log
+
+# Virtual environments (로컬에서 venv 사용 시)
+venv/
+.venv/
+env/
+.env/
+ENV/
+.Python
+
+# MacOS / Windows / Linux 시스템 파일
+.DS_Store
+Thumbs.db
+
+# IDE / Editor 설정
+.vscode/
+.idea/
+
+# 테스트 파일 (필요에 따라)
+tests/
+test/
+*.spec
+
+# README나 문서 제외할지 여부는 상황 따라
+# README.md
