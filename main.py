@@ -24,7 +24,8 @@ app.add_middleware(
 def read_root():
     return {"Hello": "World"}
 
-@app.get("/api/next-captcha")
+# POST 메소드로 변경 필요.
+@app.post("/api/next-captcha")
 def next_captcha():
     return {
         "message": "Captcha API endpoint",
