@@ -8,7 +8,7 @@ on:
 jobs:
     build-and-deploy:
         runs-on: ubuntu-latest # 워크플로우를 실행할 환경
-        timeout-minutes: 30  # 타임아웃 추가
+        timeout-minutes: 60  # 타임아웃 추가
 
         steps:
             - name: Checkout application code
@@ -44,7 +44,8 @@ jobs:
                   tags: |
                       ${{ secrets.PROJECT_NAME }}.kr-central-2.kcr.dev/${{ secrets.REPOSITORY_NAME }}/captcha-api-backend:${{ github.sha }}
                       ${{ secrets.PROJECT_NAME }}.kr-central-2.kcr.dev/${{ secrets.REPOSITORY_NAME }}/captcha-api-backend:latest
-
+                  retries: 3
+                  retry-on: error 
             - name: Checkout Kubernetes manifests repository
               uses: actions/checkout@v4
               with:
