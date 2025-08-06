@@ -2,6 +2,7 @@
 .git
 .gitignore
 .github
+.gitattributes
 
 # Python 캐시 / 빌드 파일
 __pycache__/
@@ -11,8 +12,11 @@ __pycache__/
 *.egg-info/
 *.egg
 *.log
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Virtual environments (로컬에서 venv 사용 시)
+# Virtual environments
 venv/
 .venv/
 env/
@@ -20,18 +24,42 @@ env/
 ENV/
 .Python
 
-# MacOS / Windows / Linux 시스템 파일
+# 시스템 파일
 .DS_Store
 Thumbs.db
+*.swp
+*.swo
+*~
 
 # IDE / Editor 설정
 .vscode/
 .idea/
+*.sublime-*
+.atom/
 
-# 테스트 파일 (필요에 따라)
+# 테스트 파일
 tests/
 test/
 *.spec
+test_*.py
+*_test.py
 
-# README나 문서 제외할지 여부는 상황 따라
-# README.md
+# 문서 파일
+README.md
+*.md
+docs/
+
+# 로그 파일
+*.log
+logs/
+
+# 임시 파일
+tmp/
+temp/
+.tmp/
+.temp/
+
+# Docker 관련
+Dockerfile*
+.dockerignore
+docker-compose*.yml
