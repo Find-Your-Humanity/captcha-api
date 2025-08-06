@@ -8,6 +8,7 @@ on:
 jobs:
     build-and-deploy:
         runs-on: ubuntu-latest # 워크플로우를 실행할 환경
+        timeout-minutes: 30  # 타임아웃 추가
 
         steps:
             - name: Checkout application code
