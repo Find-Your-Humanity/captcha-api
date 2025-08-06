@@ -1,17 +1,17 @@
-# 더 작고 빠른 베이스 이미지
-FROM python:3.9-slim
+# 멀티스테이지 빌드로 최적화
+FROM python:3.9-slim as builder
 
-# 환경 변수 설정 (파이썬 버퍼링 비활성화)
+# 환경 변수 설정
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # 작업 디렉토리 설정
 WORKDIR /app
 
-# 종속성 먼저 복사 → Docker 캐시 활용 최적화
+# 종속성 먼저 복사
 COPY requirements.txt .
 
-    # 시스템 패키지 설치 및 Python 종속성 설치를 한 번에 처리
+# 빌드 단계에서 종속성 설치
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         gcc \
@@ -26,7 +26,19 @@ RUN apt-get update \
     && rm -rf /tmp/* \
     && rm -rf /var/tmp/*
 
-# 애플리케이션 소스 복사 (최소한의 파일만)
+# 프로덕션 이미지
+FROM python:3.9-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# 빌더에서 설치된 패키지 복사
+COPY --from=builder /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# 애플리케이션 소스 복사
 COPY main.py .
 COPY src/ ./src/
 

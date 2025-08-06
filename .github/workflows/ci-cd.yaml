@@ -38,6 +38,8 @@ jobs:
               with:
                   context: .
                   push: true
+                  cache-from: type=gha  # GitHub Actions 캐시 사용
+                  cache-to: type=gha,mode=max  # 캐시 저장
                   # KakaoCloud Container Registry 경로에 PROJECT_NAME secret 활용
                   tags: |
                       ${{ secrets.PROJECT_NAME }}.kr-central-2.kcr.dev/${{ secrets.REPOSITORY_NAME }}/captcha-api-backend:${{ github.sha }}
