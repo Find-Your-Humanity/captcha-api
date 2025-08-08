@@ -16,12 +16,6 @@ else:
 # ML API 서버 주소 (Docker 환경이면 'ml-service', 로컬 개발이면 'localhost')
 ML_SERVICE_URL = os.getenv("ML_SERVICE_URL")
 
-# 테스트 모드: 70점 이상이어도 캡차를 순환하며 모두 표시
-TEST_MODE = os.getenv("TEST_MODE", "true").lower() == "true"
-
-# 테스트 모드용 캡차 순환 설정 (image -> handwriting -> abstract)
-CAPTCHA_CYCLE_ORDER = ["imagecaptcha", "handwritingcaptcha", "abstractcaptcha"]
-CAPTCHA_CYCLE_INDEX = 0
 
 app = FastAPI()
 
@@ -51,7 +45,6 @@ def read_root():
 
 @app.post("/api/next-captcha")
 def next_captcha(request: CaptchaRequest):
-    global CAPTCHA_CYCLE_INDEX
     behavior_data = request.behavior_data
 
     try:
@@ -73,19 +66,8 @@ def next_captcha(request: CaptchaRequest):
 
     # 신뢰도 기반 캡차 타입 결정
     if confidence_score >= 70:
-        if TEST_MODE:
-            # 테스트 모드: 70점 이상이어도 캡차를 순환 표시
-            next_captcha = CAPTCHA_CYCLE_ORDER[CAPTCHA_CYCLE_INDEX]
-            if next_captcha == "imagecaptcha":
-                captcha_type = "image"
-            elif next_captcha == "handwritingcaptcha":
-                captcha_type = "handwriting"
-            else:
-                captcha_type = "abstract"
-            CAPTCHA_CYCLE_INDEX = (CAPTCHA_CYCLE_INDEX + 1) % len(CAPTCHA_CYCLE_ORDER)
-        else:
-            captcha_type = "none"
-            next_captcha = "success"
+        captcha_type = "none"
+        next_captcha = "success"
     elif confidence_score >= 40:
         captcha_type = "image"
         next_captcha = "imagecaptcha"
