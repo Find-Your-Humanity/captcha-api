@@ -44,8 +44,7 @@ jobs:
                   tags: |
                       ${{ secrets.PROJECT_NAME }}.kr-central-2.kcr.dev/${{ secrets.REPOSITORY_NAME }}/captcha-api-backend:${{ github.sha }}
                       ${{ secrets.PROJECT_NAME }}.kr-central-2.kcr.dev/${{ secrets.REPOSITORY_NAME }}/captcha-api-backend:latest
-                  retries: 3
-                  retry-on: error 
+            
             - name: Checkout Kubernetes manifests repository
               uses: actions/checkout@v4
               with:
