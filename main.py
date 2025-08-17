@@ -194,20 +194,6 @@ def next_captcha(request: CaptchaRequest):
 
 @app.post("/api/verify-handwriting")
 def verify_handwriting(request: HandwritingVerifyRequest):
-    if not OCR_API_URL:
-        try:
-            print("⚠️ verify-handwriting aborted: OCR_API_URL not configured")
-        except Exception:
-            pass
-        return {"success": False, "message": "OCR_API_URL is not configured on server."}
-
-    if not HANDWRITING_CURRENT_CLASS:
-        try:
-            print("⚠️ verify-handwriting aborted: HANDWRITING_CURRENT_CLASS is None (manifest missing or empty)")
-        except Exception:
-            pass
-        return {"success": False, "message": "No handwriting challenge is prepared."}
-
     # data:image/png;base64,.... 형태 처리
     base64_str = request.image_base64 or ""
     if base64_str.startswith("data:image"):
@@ -222,41 +208,7 @@ def verify_handwriting(request: HandwritingVerifyRequest):
             pass
         return {"success": False, "message": f"Invalid base64 image: {e}"}
 
-    # 전처리: 흰 배경 합성 -> 그레이스케일 -> 높이 32로 리사이즈(가로 비율 유지)
-    def _preprocess_canvas_image(raw_bytes: bytes) -> bytes:
-        with Image.open(BytesIO(raw_bytes)) as img:
-            # 흰 배경 합성 (알파 제거)
-            if img.mode in ("RGBA", "LA"):
-                background = Image.new("RGBA", img.size, (255, 255, 255, 255))
-                background.paste(img, (0, 0), img)
-                img = background.convert("RGB")
-            elif img.mode == "P":
-                img = img.convert("RGB")
-
-            # 그레이스케일
-            img = img.convert("L")
-
-            # 리사이즈: 높이=32, 가로 비율 유지
-            width, height = img.size
-            if height == 0:
-                raise ValueError("invalid image height 0")
-            scale = 32.0 / float(height)
-            new_w = max(1, int(round(width * scale)))
-            img = img.resize((new_w, 32), RESAMPLE_LANCZOS)
-
-            # PNG로 다시 인코딩
-            out = BytesIO()
-            img.save(out, format="PNG")
-            return out.getvalue()
-
-    try:
-        preprocessed_bytes = _preprocess_canvas_image(image_bytes)
-    except Exception as e:
-        try:
-            print(f"⚠️ preprocess failed: {e}")
-        except Exception:
-            pass
-        return {"success": False, "message": f"Preprocess failed: {e}"}
+    # 전처리 제거: 원본 이미지를 그대로 사용
 
     # 디버그: 전송 전에 실제 파일로 저장하여 확인
     if DEBUG_SAVE_OCR_UPLOADS:
@@ -265,17 +217,27 @@ def verify_handwriting(request: HandwritingVerifyRequest):
             save_dir.mkdir(parents=True, exist_ok=True)
             ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
             raw_name = f"ocr_upload_raw_{ts}_{uuid.uuid4().hex[:8]}.png"
-            proc_name = f"ocr_upload_proc_{ts}_{uuid.uuid4().hex[:8]}.png"
             fpath_raw = save_dir / raw_name
-            fpath_proc = save_dir / proc_name
             with open(fpath_raw, "wb") as fp:
                 fp.write(image_bytes)
-            with open(fpath_proc, "wb") as fp:
-                fp.write(preprocessed_bytes)
             print(f"💾 Saved OCR upload (raw):  {fpath_raw.resolve()}")
-            print(f"💾 Saved OCR upload (proc): {fpath_proc.resolve()}")
         except Exception as e:
             print(f"⚠️ failed to save debug OCR upload: {e}")
+
+    # 저장까지는 항상 수행하고, 그 다음 설정 검증
+    if not OCR_API_URL:
+        try:
+            print("⚠️ verify-handwriting aborted after save: OCR_API_URL not configured")
+        except Exception:
+            pass
+        return {"success": False, "message": "OCR_API_URL is not configured on server."}
+
+    if not HANDWRITING_CURRENT_CLASS:
+        try:
+            print("⚠️ verify-handwriting aborted after save: HANDWRITING_CURRENT_CLASS is None (manifest missing or empty)")
+        except Exception:
+            pass
+        return {"success": False, "message": "No handwriting challenge is prepared."}
 
     def _call_ocr(mode: str):
         field = OCR_IMAGE_FIELD
@@ -284,11 +246,11 @@ def verify_handwriting(request: HandwritingVerifyRequest):
 
         print(f"🔎 Calling OCR API: {OCR_API_URL} mode={mode}, field={field}, payloadLen={len(base64_str)}")
         if mode == "multipart":
-            files = {field: ("handwriting.png", preprocessed_bytes, "image/png")}
+            files = {field: ("handwriting.png", image_bytes, "image/png")}
             return httpx.post(OCR_API_URL, files=files, timeout=20.0)
         else:
-            # JSON으로 보낼 때도 전처리된 바이트를 base64로 재인코딩하여 전송
-            body_b64 = base64.b64encode(preprocessed_bytes).decode("ascii")
+            # JSON으로 보낼 때도 원본 바이트를 base64로 인코딩하여 전송
+            body_b64 = base64.b64encode(image_bytes).decode("ascii")
             body = {field: body_b64}
             return httpx.post(OCR_API_URL, json=body, timeout=20.0)
 
