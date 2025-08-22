@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List, Tuple
 from dotenv import load_dotenv
 import httpx
 import os
@@ -13,6 +15,11 @@ from pathlib import Path
 from datetime import datetime
 import uuid
 from PIL import Image
+import time
+import hmac
+import hashlib
+import mimetypes
+import threading
 try:
     RESAMPLE_LANCZOS = Image.Resampling.LANCZOS  # Pillow >= 9.1
 except Exception:
@@ -27,6 +34,18 @@ else:
 
 # ML API 서버 주소 (Docker 환경이면 'ml-service', 로컬 개발이면 'localhost')
 ML_SERVICE_URL = os.getenv("ML_SERVICE_URL")
+# Abstract 이미지 분류 배치 추론 API (ml-service)
+ABSTRACT_API_URL = os.getenv("ABSTRACT_API_URL", "http://localhost:8001/predict-abstract-proba-batch")
+# HMAC 서명 키
+ABSTRACT_HMAC_SECRET = os.getenv("ABSTRACT_HMAC_SECRET", "change-this-secret")
+# 추출 대상 단어 리스트 경로 (ml-service/src/crnn/word_list.txt)
+WORD_LIST_PATH = os.getenv("WORD_LIST_PATH", str(Path(__file__).resolve().parents[1] / "ml-service" / "src" / "crnn" / "word_list.txt"))
+# 추출 이미지 루트 디렉토리 (로컬 파일 제공)
+ABSTRACT_IMAGE_ROOT = os.getenv("ABSTRACT_IMAGE_ROOT", str(Path(__file__).resolve().parents[1] / "abstractcaptcha"))
+# 라벨 기반 샘플링: 클래스→디렉터리(들) 매핑 JSON 경로 (선택)
+ABSTRACT_CLASS_DIR_MAP = os.getenv("ABSTRACT_CLASS_DIR_MAP", "")
+# 클래스별 키워드 맵 JSON 경로 (선택)
+ABSTRACT_KEYWORD_MAP = os.getenv("ABSTRACT_KEYWORD_MAP", "")
 # 백엔드 테스트 모드: ML 호출 스킵하고 고정 점수 사용
 TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
 HANDWRITING_MANIFEST_PATH = os.getenv("HANDWRITING_MANIFEST_PATH", "handwriting_manifest.json")
@@ -36,6 +55,7 @@ OCR_REQUEST_FORMAT = os.getenv("OCR_REQUEST_FORMAT", "multipart").lower()  # 'js
 OCR_IMAGE_FIELD = os.getenv("OCR_IMAGE_FIELD")  # 포맷별 기본값 적용
 DEBUG_SAVE_OCR_UPLOADS = os.getenv("DEBUG_SAVE_OCR_UPLOADS", "false").lower() == "true"
 DEBUG_OCR_DIR = os.getenv("DEBUG_OCR_DIR", "debug_uploads")
+DEBUG_ABSTRACT_VERIFY = os.getenv("DEBUG_ABSTRACT_VERIFY", "false").lower() == "true"
 
 app = FastAPI()
 
@@ -50,6 +70,32 @@ class HandwritingVerifyRequest(BaseModel):
 HANDWRITING_MANIFEST: Dict[str, Any] = {}
 HANDWRITING_CURRENT_CLASS: Optional[str] = None
 HANDWRITING_CURRENT_IMAGES: list[str] = []
+
+# ===== Abstract Captcha 서버 상태 =====
+class AbstractVerifyRequest(BaseModel):
+    challenge_id: str
+    selections: List[int]
+    # 클라이언트가 이미지별 서명을 전달해오면 서버가 무결성 재확인 가능 (선택)
+    signatures: Optional[List[str]] = None
+
+
+class AbstractCaptchaSession:
+    def __init__(self, challenge_id: str, target_class: str, image_paths: List[str], is_positive: List[bool], ttl_seconds: int, keywords: List[str], created_at: float):
+        self.challenge_id = challenge_id
+        self.target_class = target_class
+        self.image_paths = image_paths
+        self.is_positive = is_positive
+        self.ttl_seconds = ttl_seconds
+        self.keywords = keywords
+        self.created_at = created_at
+        self.attempts = 0
+
+    def is_expired(self) -> bool:
+        return (time.time() - self.created_at) > self.ttl_seconds
+
+
+ABSTRACT_SESSIONS: Dict[str, AbstractCaptchaSession] = {}
+ABSTRACT_SESSIONS_LOCK = threading.Lock()
 
 
 def _normalize_text(text: str) -> str:
@@ -100,6 +146,155 @@ def _select_handwriting_challenge() -> None:
     HANDWRITING_CURRENT_IMAGES = images[:5] if len(images) >= 5 else images
 
 
+def _load_word_list(path: str) -> List[str]:
+    try:
+        lines = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                t = line.strip()
+                if not t:
+                    continue
+                lines.append(t)
+        return lines
+    except Exception as e:
+        print(f"⚠️ failed to load word list: {e}")
+        return []
+
+
+def _iter_random_images(root_dir: str, sample_size: int = 60) -> List[str]:
+    # 대용량 디렉터리에서 무작위 경로 샘플링
+    root = Path(root_dir)
+    if not root.exists():
+        return []
+    # 무작위 디렉터리 몇 개를 먼저 샘플링하여 탐색량 축소
+    subdirs = [p for p in root.iterdir() if p.is_dir()]
+    random.shuffle(subdirs)
+    picked: List[str] = []
+    for d in subdirs:
+        # 각 디렉토리에서 일부만 샘플링
+        files = [p for p in d.iterdir() if p.is_file() and p.suffix.lower() in (".jpg", ".jpeg", ".png", ".gif")]
+        random.shuffle(files)
+        for f in files[: max(3, sample_size // 10)]:
+            picked.append(str(f.resolve()))
+            if len(picked) >= sample_size:
+                break
+        if len(picked) >= sample_size:
+            break
+    # 백업: 상위에서 직접 스캔
+    if len(picked) < sample_size:
+        for p in root.rglob("*"):
+            if p.is_file() and p.suffix.lower() in (".jpg", ".jpeg", ".png", ".gif"):
+                picked.append(str(p.resolve()))
+                if len(picked) >= sample_size:
+                    break
+    random.shuffle(picked)
+    return picked[:sample_size]
+
+
+def _load_class_dir_map(path: str) -> Dict[str, List[str]]:
+    if not path:
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        mapping: Dict[str, List[str]] = {}
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(v, list):
+                    mapping[str(k)] = [str(x) for x in v]
+                else:
+                    mapping[str(k)] = [str(v)]
+        return mapping
+    except Exception as e:
+        print(f"⚠️ failed to load ABSTRACT_CLASS_DIR_MAP: {e}")
+        return {}
+
+
+def _sample_images_from_dirs(dirs: List[str], desired_count: int) -> List[str]:
+    paths: List[str] = []
+    for d in dirs:
+        p = Path(d)
+        if not p.exists() or not p.is_dir():
+            continue
+        files = [fp for fp in p.iterdir() if fp.is_file() and fp.suffix.lower() in (".jpg", ".jpeg", ".png", ".gif")]
+        random.shuffle(files)
+        for f in files:
+            paths.append(str(f.resolve()))
+            if len(paths) >= desired_count:
+                break
+        if len(paths) >= desired_count:
+            break
+    random.shuffle(paths)
+    return paths[:desired_count]
+
+
+def _iter_random_images_excluding(root_dir: str, exclude_dirs: List[str], sample_size: int) -> List[str]:
+    root = Path(root_dir).resolve()
+    exclude_roots = [Path(d).resolve() for d in exclude_dirs if d]
+
+    def _is_under_excluded(p: Path) -> bool:
+        try:
+            pr = p.resolve()
+        except Exception:
+            pr = p
+        pr_str = str(pr)
+        for ex in exclude_roots:
+            ex_str = str(ex)
+            # 간단한 경로 포함 체크 (Windows 호환)
+            if pr_str.startswith(ex_str + os.sep) or pr_str == ex_str:
+                return True
+        return False
+
+    # 루트 전체를 순회하며 랜덤 샘플링 (제외 디렉터리 하위는 건너뜀)
+    all_files: List[Path] = []
+    try:
+        for p in root.rglob('*'):
+            if not p.is_file():
+                continue
+            if p.suffix.lower() not in ('.jpg', '.jpeg', '.png', '.gif'):
+                continue
+            if _is_under_excluded(p):
+                continue
+            all_files.append(p)
+    except Exception:
+        pass
+    random.shuffle(all_files)
+    return [str(p.resolve()) for p in all_files[:sample_size]]
+
+
+def _load_keyword_map(path: str) -> Dict[str, List[str]]:
+    if not path:
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        mapping: Dict[str, List[str]] = {}
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(v, list):
+                    cleaned = [str(x).strip() for x in v if str(x).strip()]
+                    if cleaned:
+                        mapping[str(k)] = cleaned
+        return mapping
+    except Exception as e:
+        print(f"⚠️ failed to load ABSTRACT_KEYWORD_MAP: {e}")
+        return {}
+
+
+def _sign_image_token(challenge_id: str, image_index: int) -> str:
+    msg = f"{challenge_id}:{image_index}".encode("utf-8")
+    key = ABSTRACT_HMAC_SECRET.encode("utf-8")
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+
+def _verify_image_token(challenge_id: str, image_index: int, signature: str) -> bool:
+    try:
+        expected = _sign_image_token(challenge_id, image_index)
+        return hmac.compare_digest(expected, signature)
+    except Exception:
+        return False
+
+
 # 서버 시작 시 매니페스트 로드 및 챌린지 선택
 HANDWRITING_MANIFEST = _load_handwriting_manifest(HANDWRITING_MANIFEST_PATH)
 _select_handwriting_challenge()
@@ -107,6 +302,24 @@ try:
     print(
         f"✍️ Handwriting manifest loaded: classes={len(HANDWRITING_MANIFEST.keys()) if HANDWRITING_MANIFEST else 0}, "
         f"current_class={HANDWRITING_CURRENT_CLASS}, samples={len(HANDWRITING_CURRENT_IMAGES)}"
+    )
+except Exception:
+    pass
+
+# 단어 리스트 로드 로그
+ABSTRACT_CLASS_LIST = _load_word_list(WORD_LIST_PATH)
+try:
+    print(f"🖼️ Abstract word list: {len(ABSTRACT_CLASS_LIST)} classes from {WORD_LIST_PATH}")
+except Exception:
+    pass
+
+# 클래스 디렉토리 매핑 및 키워드 매핑 로드
+ABSTRACT_CLASS_DIR_MAPPING = _load_class_dir_map(ABSTRACT_CLASS_DIR_MAP)
+ABSTRACT_KEYWORDS_BY_CLASS = _load_keyword_map(ABSTRACT_KEYWORD_MAP)
+try:
+    print(
+        f"🗂️ ClassDirMap loaded: {len(ABSTRACT_CLASS_DIR_MAPPING)} classes; "
+        f"🔤 KeywordMap loaded: {len(ABSTRACT_KEYWORDS_BY_CLASS)} classes"
     )
 except Exception:
     pass
@@ -161,19 +374,19 @@ def next_captcha(request: CaptchaRequest):
             ML_SERVICE_USED = False
 
     # 신뢰도 기반 캡차 타입 결정
+    # 점수대에 따라 캡차 타입 분기 (운영 시 가중치 조정 가능)
     if confidence_score >= 70:
-        captcha_type = "handwriting"
-        next_captcha = "handwritingcaptcha"
+        captcha_type = "abstract"
+        next_captcha = "abstractcaptcha"
     elif confidence_score >= 40:
-        captcha_type = "handwriting"
-        next_captcha = "handwritingcaptcha"
+        captcha_type = "abstract"
+        next_captcha = "abstractcaptcha"
     elif confidence_score >= 20:
-        captcha_type = "handwriting"
-        next_captcha = "handwritingcaptcha"
+        captcha_type = "abstract"
+        next_captcha = "abstractcaptcha"
     else:
-        captcha_type = "handwriting"
-        next_captcha = "handwritingcaptcha"
-
+        captcha_type = "abstract"
+        next_captcha = "abstractcaptcha"
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
@@ -331,3 +544,268 @@ def verify_handwriting(request: HandwritingVerifyRequest):
     if is_match and SUCCESS_REDIRECT_URL:
         response["redirect_url"] = SUCCESS_REDIRECT_URL
     return response
+
+
+# ================= Abstract Captcha API =================
+
+@app.post("/api/abstract-captcha")
+def create_abstract_captcha() -> Dict[str, Any]:
+    if not ABSTRACT_CLASS_LIST:
+        raise HTTPException(status_code=500, detail="Word list is empty. Configure WORD_LIST_PATH.")
+
+    target_class = random.choice(ABSTRACT_CLASS_LIST)
+    # 키워드 샘플링: 무조건 클래스별 키워드 사용 (폴백 없음)
+    pool = ABSTRACT_KEYWORDS_BY_CLASS.get(target_class, [])
+    if not pool:
+        raise HTTPException(status_code=500, detail=f"No keywords configured for target_class: {target_class}")
+    pool_unique = list(dict.fromkeys([k for k in pool if isinstance(k, str) and k.strip()]))
+    keywords = random.sample(pool_unique, k=1)
+    question = (
+        f"{keywords[0]} 이미지를 골라주세요" if len(keywords) == 1 else f"{' 및 '.join(keywords)} 이미지를 골라주세요"
+    )
+
+    # 정답 비율 범위에서 무작위 결정 (30~60%) 및 최소 보장 수량
+    positive_ratio = random.uniform(0.2, 0.7)
+    desired_positive = max(1, min(6, int(round(9 * positive_ratio))))
+    min_positive_guarantee = max(2, desired_positive)  # 최소 3장은 보장
+
+    # 라벨 매핑 로드 (선택)
+    class_dir_map = ABSTRACT_CLASS_DIR_MAPPING
+    guaranteed_positive_paths: List[str] = []
+    if class_dir_map and target_class in class_dir_map:
+        guaranteed_positive_paths = _sample_images_from_dirs(class_dir_map[target_class], desired_count=min_positive_guarantee)
+
+    # 후보 풀 구성: 보장 정답 + 무작위
+    base_pool_size = 60
+    candidate_paths = list(guaranteed_positive_paths)
+    if len(candidate_paths) < base_pool_size:
+        # 보장된 타겟 디렉터리를 제외하고 랜덤 샘플링하여 오답 후보 밀도를 높임
+        exclude_dirs = class_dir_map.get(target_class, []) if class_dir_map else []
+        extra = _iter_random_images_excluding(ABSTRACT_IMAGE_ROOT, exclude_dirs=exclude_dirs, sample_size=base_pool_size - len(candidate_paths))
+        # 중복 제거
+        seen = set(candidate_paths)
+        for p in extra:
+            if p not in seen:
+                candidate_paths.append(p)
+                seen.add(p)
+    if len(candidate_paths) < 12:
+        raise HTTPException(status_code=500, detail="Not enough abstract images in dataset")
+
+    # ml-service 배치 확률 요청
+    def _batch_predict_prob(paths: List[str], target: str) -> List[float]:
+        try:
+            files = []
+            for p in paths:
+                files.append(('files', (Path(p).name, open(p, 'rb'), mimetypes.guess_type(p)[0] or 'image/jpeg')))
+            data = {"target_class": target}
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(ABSTRACT_API_URL, data=data, files=files)
+                resp.raise_for_status()
+                probs_local: List[float] = resp.json().get("probs", [])
+            for _, f in files:
+                try:
+                    f[1].close()
+                except Exception:
+                    pass
+            return probs_local
+        except Exception as e:
+            print(f"❌ Abstract ML batch request failed: {e}")
+            return [random.random() for _ in paths]
+
+    probs = _batch_predict_prob(candidate_paths, target_class)
+
+    # 모델 기반으로 상위 확률을 정답 후보로 선정
+    sorted_indices = sorted(range(len(candidate_paths)), key=lambda i: probs[i], reverse=True)
+
+    # guaranteed_positive_paths는 무조건 정답으로 플래그
+    guaranteed_indices = set(i for i, p in enumerate(candidate_paths) if p in set(guaranteed_positive_paths))
+
+    selected_indices: List[int] = []
+    is_positive_flags: List[bool] = []
+
+    # 1) 보장 정답 먼저 채우기
+    for i in list(guaranteed_indices)[:min_positive_guarantee]:
+        selected_indices.append(i)
+        is_positive_flags.append(True)
+
+    # 2) 추가 정답이 필요하면 상위 확률에서 추가
+    i_ptr = 0
+    while len([flag for flag in is_positive_flags if flag]) < desired_positive and i_ptr < len(sorted_indices):
+        idx = sorted_indices[i_ptr]
+        i_ptr += 1
+        if idx in selected_indices:
+            continue
+        selected_indices.append(idx)
+        is_positive_flags.append(True)
+
+    # 3) 오답 채우기: 하위 확률에서 채움
+    neg_pool = list(reversed(sorted_indices))
+    j_ptr = 0
+    while len(selected_indices) < 9 and j_ptr < len(neg_pool):
+        idx = neg_pool[j_ptr]
+        j_ptr += 1
+        if idx in selected_indices or idx in guaranteed_indices:
+            continue
+        selected_indices.append(idx)
+        is_positive_flags.append(False)
+
+    # 4) 그래도 부족하면 중간값에서 보충
+    mid_pool = [i for i in sorted_indices if i not in selected_indices]
+    for idx in mid_pool:
+        if len(selected_indices) >= 9:
+            break
+        selected_indices.append(idx)
+        is_positive_flags.append(False)
+
+    # 최종 경로
+    final_paths = [candidate_paths[i] for i in selected_indices]
+
+    # 세션 저장
+    challenge_id = uuid.uuid4().hex
+    ttl_seconds = random.randint(50, 60)
+    session = AbstractCaptchaSession(
+        challenge_id=challenge_id,
+        target_class=target_class,
+        image_paths=final_paths,
+        is_positive=is_positive_flags,
+        ttl_seconds=ttl_seconds,
+        keywords=keywords,
+        created_at=time.time(),
+    )
+    with ABSTRACT_SESSIONS_LOCK:
+        ABSTRACT_SESSIONS[challenge_id] = session
+
+    # 응답용 이미지 URL 생성 (서명 포함)
+    images: List[Dict[str, Any]] = []
+    for idx, _ in enumerate(final_paths):
+        sig = _sign_image_token(challenge_id, idx)
+        url = f"/api/abstract-captcha/image?cid={challenge_id}&idx={idx}&sig={sig}"
+        images.append({"id": idx, "url": url})
+
+    return {
+        "challenge_id": challenge_id,
+        "question": question,
+        "target_class": target_class,
+        "keywords": keywords,
+        "ttl": ttl_seconds,
+        "images": images,
+    }
+
+# 세션 조회/만료 확인: 없거나 TTL 만료면 410.
+# 무결성 확인: sig가 HMAC(cid:idx)와 일치하지 않으면 403.
+# 경로 확인: 인덱스 범위/파일 존재 여부 검사. 잘못되면 404.
+# 응답: 파일 바이트를 읽고 MIME 추정 후 바디로 반환.
+@app.get("/api/abstract-captcha/image")
+def get_abstract_captcha_image(cid: str, idx: int, sig: str):
+    with ABSTRACT_SESSIONS_LOCK:
+        session = ABSTRACT_SESSIONS.get(cid)
+    if not session or session.is_expired():
+        raise HTTPException(status_code=410, detail="Challenge expired or not found")
+    if not _verify_image_token(cid, idx, sig):
+        raise HTTPException(status_code=403, detail="Invalid image signature")
+    try:
+        path = Path(session.image_paths[idx])
+    except Exception:
+        raise HTTPException(status_code=404, detail="Image index invalid")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Image file missing")
+    if DEBUG_ABSTRACT_VERIFY:
+        try:
+            positives = [i for i, flag in enumerate(session.is_positive) if flag]
+            is_pos = False
+            try:
+                is_pos = bool(session.is_positive[idx])
+            except Exception:
+                is_pos = False
+            print(
+                f"🖼️ [abstract-image] cid={cid}, idx={idx}, is_positive={is_pos}, positives={positives}, file='{path.name}'"
+            )
+        except Exception:
+            pass
+    data = path.read_bytes()
+    ctype = mimetypes.guess_type(str(path))[0] or "image/jpeg"
+    return Response(content=data, media_type=ctype)
+
+
+@app.post("/api/abstract-verify")
+def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
+    if DEBUG_ABSTRACT_VERIFY:
+        try:
+            print(
+                f"🧪 [abstract-verify] incoming: cid={req.challenge_id}, selections={list(req.selections or [])}, "
+                f"sigs={'none' if req.signatures is None else len(req.signatures)}"
+            )
+        except Exception:
+            pass
+    with ABSTRACT_SESSIONS_LOCK:
+        session = ABSTRACT_SESSIONS.get(req.challenge_id)
+    if not session:
+        return {"success": False, "message": "Challenge not found"}
+    if session.is_expired():
+        # 만료된 세션은 제거
+        with ABSTRACT_SESSIONS_LOCK:
+            ABSTRACT_SESSIONS.pop(req.challenge_id, None)
+        return {"success": False, "message": "Challenge expired"}
+
+    selections_set = set(req.selections or [])
+    # 무결성: 서명이 왔다면 모두 검사
+    if req.signatures is not None:
+        if len(req.signatures) != len(session.image_paths):
+            return {"success": False, "message": "Invalid signatures length"}
+        for i, sig in enumerate(req.signatures):
+            if not _verify_image_token(session.challenge_id, i, sig):
+                return {"success": False, "message": "Invalid signature detected"}
+
+    tp = sum(1 for i, is_pos in enumerate(session.is_positive) if is_pos and i in selections_set)
+    fp = sum(1 for i, is_pos in enumerate(session.is_positive) if (not is_pos) and i in selections_set)
+    fn = sum(1 for i, is_pos in enumerate(session.is_positive) if is_pos and i not in selections_set)
+
+    # 점수: 간단한 정규화 F1 유사 스코어 (참고용, 판정에는 사용하지 않음)
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    img_score = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+
+    # 정답 판정: 사용자가 모든 정답을 선택했다면 통과(추가 선택은 허용)
+    positives_set = {i for i, is_pos in enumerate(session.is_positive) if is_pos}
+    is_pass = positives_set.issubset(selections_set)
+
+    if DEBUG_ABSTRACT_VERIFY:
+        try:
+            print(
+                f"🧮 [abstract-verify] tp={tp}, fp={fp}, fn={fn}, precision={precision:.4f}, recall={recall:.4f}, "
+                f"img_score={img_score:.4f}, positives={sorted(list(positives_set))}, selections={sorted(list(selections_set))}, "
+                f"is_pass={is_pass}"
+            )
+        except Exception:
+            pass
+
+    # 시도 횟수 업데이트 및 세션 유지/삭제 결정
+    with ABSTRACT_SESSIONS_LOCK:
+        session.attempts += 1
+        attempts = session.attempts
+        if is_pass or attempts >= 2:
+            ABSTRACT_SESSIONS.pop(req.challenge_id, None)
+
+    payload = {
+        "success": is_pass,
+        "img_score": round(img_score, 4),
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "target_class": session.target_class,
+        "keywords": session.keywords,
+        "attempts": attempts,
+        "expired": False,
+    }
+    if not is_pass and attempts >= 2:
+        payload["message"] = "Too many attempts; please try an easier challenge."
+        payload["downshift"] = True
+    if DEBUG_ABSTRACT_VERIFY:
+        try:
+            preview = json.dumps(payload, ensure_ascii=False)
+            if len(preview) > 500:
+                preview = preview[:500] + "... (truncated)"
+            print(f"📦 [abstract-verify] payload: {preview}")
+        except Exception:
+            pass
+    return payload
