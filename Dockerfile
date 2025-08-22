@@ -40,6 +40,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # 애플리케이션 소스 복사
 COPY main.py .
+COPY word_list.txt .
 COPY src/ ./src/
 
 # 포트 노출
