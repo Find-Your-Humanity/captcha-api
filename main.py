@@ -376,17 +376,17 @@ def next_captcha(request: CaptchaRequest):
     # 신뢰도 기반 캡차 타입 결정
     # 점수대에 따라 캡차 타입 분기 (운영 시 가중치 조정 가능)
     if confidence_score >= 70:
-        captcha_type = "abstract"
-        next_captcha = "abstractcaptcha"
+        captcha_type = "handwriting"
+        next_captcha = "handwritingcaptcha"
     elif confidence_score >= 40:
-        captcha_type = "abstract"
-        next_captcha = "abstractcaptcha"
+        captcha_type = "handwriting"
+        next_captcha = "handwritingcaptcha"
     elif confidence_score >= 20:
-        captcha_type = "abstract"
-        next_captcha = "abstractcaptcha"
+        captcha_type = "handwriting"
+        next_captcha = "handwritingcaptcha"
     else:
-        captcha_type = "abstract"
-        next_captcha = "abstractcaptcha"
+        captcha_type = "handwriting"
+        next_captcha = "handwritingcaptcha"
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
