@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel
 from typing import Any, Dict, Optional, List, Tuple
 from dotenv import load_dotenv
@@ -32,30 +32,40 @@ if ENV == "production":
 else:
     load_dotenv(".env.development")
 
-# ML API 서버 주소 (Docker 환경이면 'ml-service', 로컬 개발이면 'localhost')
-ML_SERVICE_URL = os.getenv("ML_SERVICE_URL")
-# Abstract 이미지 분류 배치 추론 API (ml-service)
-ABSTRACT_API_URL = os.getenv("ABSTRACT_API_URL", "http://localhost:8001/predict-abstract-proba-batch")
+# ML 서비스 베이스 URL (ex: http://localhost:8001)
+ML_SERVICE_URL = os.getenv("ML_SERVICE_URL", "http://localhost:8001")
+# 파생 URL (직접 결합)
+ML_PREDICT_BOT_URL = f"{ML_SERVICE_URL.rstrip('/')}" + "/predict-bot"
+ABSTRACT_API_URL = f"{ML_SERVICE_URL.rstrip('/')}" + "/predict-abstract-proba-batch"
 # HMAC 서명 키
 ABSTRACT_HMAC_SECRET = os.getenv("ABSTRACT_HMAC_SECRET", "change-this-secret")
-# 추출 대상 단어 리스트 경로 (/app/word_list.txt)
-WORD_LIST_PATH = os.getenv("WORD_LIST_PATH", str(Path(__file__).resolve().parents[1] / "app" / "word_list.txt"))
-# 추출 이미지 루트 디렉토리 (로컬 파일 제공)
+# 추출 대상 단어 리스트 경로 (백엔드 디렉터리 기본값)
+WORD_LIST_PATH = os.getenv("WORD_LIST_PATH", str(Path(__file__).resolve().parent / "word_list.txt"))
+# 추출 이미지 루트 디렉토리 (로컬 파일 제공; 스토리지 사용 시 키 매핑 기준)
 ABSTRACT_IMAGE_ROOT = os.getenv("ABSTRACT_IMAGE_ROOT", str(Path(__file__).resolve().parents[1] / "abstractcaptcha"))
-# 라벨 기반 샘플링: 클래스→디렉터리(들) 매핑 JSON 경로 (선택)
-ABSTRACT_CLASS_DIR_MAP = os.getenv("ABSTRACT_CLASS_DIR_MAP", "")
-# 클래스별 키워드 맵 JSON 경로 (선택)
-ABSTRACT_KEYWORD_MAP = os.getenv("ABSTRACT_KEYWORD_MAP", "")
+# 라벨 기반 샘플링: 클래스→디렉터리(들) 매핑 JSON 경로 (선택; 백엔드 디렉터리 기본값)
+ABSTRACT_CLASS_DIR_MAP = os.getenv("ABSTRACT_CLASS_DIR_MAP", str(Path(__file__).resolve().parent / "abstract_class_dir_map.json"))
+# 클래스별 키워드 맵 JSON 경로 (선택; 백엔드 디렉터리 기본값)
+ABSTRACT_KEYWORD_MAP = os.getenv("ABSTRACT_KEYWORD_MAP", str(Path(__file__).resolve().parent / "abstract_keyword_map.json"))
 # 백엔드 테스트 모드: ML 호출 스킵하고 고정 점수 사용
 TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
 HANDWRITING_MANIFEST_PATH = os.getenv("HANDWRITING_MANIFEST_PATH", "handwriting_manifest.json")
 SUCCESS_REDIRECT_URL = os.getenv("SUCCESS_REDIRECT_URL")
-OCR_API_URL = os.getenv("OCR_API_URL")
+OCR_API_URL = f"{ML_SERVICE_URL.rstrip('/')}" + "/predict-text"
 OCR_REQUEST_FORMAT = os.getenv("OCR_REQUEST_FORMAT", "multipart").lower()  # 'json' | 'multipart'
 OCR_IMAGE_FIELD = os.getenv("OCR_IMAGE_FIELD")  # 포맷별 기본값 적용
 DEBUG_SAVE_OCR_UPLOADS = os.getenv("DEBUG_SAVE_OCR_UPLOADS", "false").lower() == "true"
 DEBUG_OCR_DIR = os.getenv("DEBUG_OCR_DIR", "debug_uploads")
 DEBUG_ABSTRACT_VERIFY = os.getenv("DEBUG_ABSTRACT_VERIFY", "false").lower() == "true"
+DEBUG_SAVE_BEHAVIOR_DATA = os.getenv("DEBUG_SAVE_BEHAVIOR_DATA", "false").lower() == "true"
+DEBUG_BEHAVIOR_DIR = os.getenv("DEBUG_BEHAVIOR_DIR", "debug_behavior")
+ASSET_BASE_URL = os.getenv("ASSET_BASE_URL")  # legacy proxy mode only (kept for fallback)
+OBJECT_STORAGE_ENDPOINT = os.getenv("OBJECT_STORAGE_ENDPOINT")
+OBJECT_STORAGE_REGION = os.getenv("OBJECT_STORAGE_REGION", "kr-central-2")
+OBJECT_STORAGE_BUCKET = os.getenv("OBJECT_STORAGE_BUCKET")
+OBJECT_STORAGE_ACCESS_KEY = os.getenv("OBJECT_STORAGE_ACCESS_KEY")
+OBJECT_STORAGE_SECRET_KEY = os.getenv("OBJECT_STORAGE_SECRET_KEY")
+PRESIGN_TTL_SECONDS = int(os.getenv("PRESIGN_TTL_SECONDS", "120"))
 
 app = FastAPI()
 
@@ -100,6 +110,44 @@ ABSTRACT_SESSIONS_LOCK = threading.Lock()
 
 def _normalize_text(text: str) -> str:
     return "".join(ch.lower() for ch in text.strip() if ch.isalnum())
+
+
+def _map_local_to_key(local_path: str) -> Optional[str]:
+    try:
+        root = Path(ABSTRACT_IMAGE_ROOT).resolve()
+        p = Path(local_path).resolve()
+        rel = p.relative_to(root)
+    except Exception:
+        return None
+    return str(rel).replace(os.sep, "/").lstrip("/")
+
+
+def _presign_url_for_key(key: str) -> Optional[str]:
+    if ENV != "production":
+        return None
+    if not (OBJECT_STORAGE_BUCKET and OBJECT_STORAGE_ENDPOINT and OBJECT_STORAGE_ACCESS_KEY and OBJECT_STORAGE_SECRET_KEY):
+        return None
+    try:
+        import boto3  # lazy import
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=OBJECT_STORAGE_ENDPOINT,
+            region_name=OBJECT_STORAGE_REGION,
+            aws_access_key_id=OBJECT_STORAGE_ACCESS_KEY,
+            aws_secret_access_key=OBJECT_STORAGE_SECRET_KEY,
+        )
+        return s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": OBJECT_STORAGE_BUCKET, "Key": key},
+            ExpiresIn=PRESIGN_TTL_SECONDS,
+            HttpMethod="GET",
+        )
+    except Exception as e:
+        try:
+            print(f"⚠️ presign failed: {e}")
+        except Exception:
+            pass
+        return None
 
 
 def _load_handwriting_manifest(path: str) -> Dict[str, list[str]]:
@@ -348,6 +396,43 @@ def read_root():
 @app.post("/api/next-captcha")
 def next_captcha(request: CaptchaRequest):
     behavior_data = request.behavior_data
+    try:
+        mm = len((behavior_data or {}).get("mouseMovements", []))
+        mc = len((behavior_data or {}).get("mouseClicks", []))
+        se = len((behavior_data or {}).get("scrollEvents", []))
+        page = (behavior_data or {}).get("pageEvents", {}) or {}
+        approx_bytes = len(json.dumps({"behavior_data": behavior_data}) or "")
+        print(
+            f"📥 [/api/next-captcha] received: counts={{mm:{mm}, mc:{mc}, se:{se}}}, "
+            f"page={{enter:{page.get('enterTime')}, exit:{page.get('exitTime')}, total:{page.get('totalTime')}}}, "
+            f"approx={approx_bytes}B"
+        )
+        # 상세 샘플 로그 (앞 일부만 출력)
+        try:
+            sample = {
+                "mouseMovements": (behavior_data or {}).get("mouseMovements", [])[:3],
+                "mouseClicks": (behavior_data or {}).get("mouseClicks", [])[:3],
+                "scrollEvents": (behavior_data or {}).get("scrollEvents", [])[:3],
+                "pageEvents": page,
+            }
+            print(f"🔎 [/api/next-captcha] sample: {json.dumps(sample, ensure_ascii=False)[:800]}")
+        except Exception:
+            pass
+        # 원본 저장 (옵션)
+        if DEBUG_SAVE_BEHAVIOR_DATA:
+            try:
+                save_dir = Path(DEBUG_BEHAVIOR_DIR)
+                save_dir.mkdir(parents=True, exist_ok=True)
+                ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+                fname = f"behavior_{ts}_{uuid.uuid4().hex[:8]}.json"
+                fpath = save_dir / fname
+                with open(fpath, "w", encoding="utf-8") as fp:
+                    json.dump({"behavior_data": behavior_data}, fp, ensure_ascii=False)
+                print(f"💾 [/api/next-captcha] saved behavior_data: {str(fpath.resolve())}")
+            except Exception as e:
+                print(f"⚠️ failed to save behavior_data: {e}")
+    except Exception:
+        pass
 
     if TEST_MODE:
         # 테스트용 고정 점수 (원하면 30/50/80 등으로 조절하여 단계 테스트)
@@ -358,7 +443,7 @@ def next_captcha(request: CaptchaRequest):
     else:
         try:
             #ML API 서버에 요청
-            response = httpx.post(ML_SERVICE_URL, json={"behavior_data": behavior_data})
+            response = httpx.post(ML_PREDICT_BOT_URL, json={"behavior_data": behavior_data})
             response.raise_for_status()
             result = response.json()
 
@@ -376,17 +461,17 @@ def next_captcha(request: CaptchaRequest):
     # 신뢰도 기반 캡차 타입 결정
     # 점수대에 따라 캡차 타입 분기 (운영 시 가중치 조정 가능)
     if confidence_score >= 70:
-        captcha_type = "handwriting"
-        next_captcha = "handwritingcaptcha"
+        captcha_type = "abstract"
+        next_captcha = "abstractcaptcha"
     elif confidence_score >= 40:
-        captcha_type = "handwriting"
-        next_captcha = "handwritingcaptcha"
+        captcha_type = "abstract"
+        next_captcha = "abstractcaptcha"
     elif confidence_score >= 20:
-        captcha_type = "handwriting"
-        next_captcha = "handwritingcaptcha"
+        captcha_type = "abstract"
+        next_captcha = "abstractcaptcha"
     else:
-        captcha_type = "handwriting"
-        next_captcha = "handwritingcaptcha"
+        captcha_type = "abstract"
+        next_captcha = "abstractcaptcha"
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
@@ -401,6 +486,18 @@ def next_captcha(request: CaptchaRequest):
     # handwriting 단계 진입 시 프런트에 샘플 이미지 전달 (정답 텍스트는 서버에만 보관)
     if next_captcha == "handwritingcaptcha":
         payload["handwriting_samples"] = HANDWRITING_CURRENT_IMAGES
+
+    try:
+        preview = {
+            "captcha_type": captcha_type,
+            "next_captcha": next_captcha,
+            "confidence_score": confidence_score,
+            "ml_service_used": ML_SERVICE_USED,
+            "is_bot_detected": is_bot if ML_SERVICE_USED else None,
+        }
+        print(f"📦 [/api/next-captcha] response: {json.dumps(preview, ensure_ascii=False)}")
+    except Exception:
+        pass
 
     return payload
 
@@ -595,6 +692,18 @@ def create_abstract_captcha() -> Dict[str, Any]:
     def _batch_predict_prob(paths: List[str], target: str) -> List[float]:
         try:
             files = []
+            try:
+                preview_names = [Path(p).name for p in paths[:5]]
+            except Exception:
+                preview_names = []
+            start_ts = time.time()
+            try:
+                print(
+                    f"🚚 [abstract-batch->ml] url={ABSTRACT_API_URL}, target={target}, num_files={len(paths)}, "
+                    f"preview={preview_names}"
+                )
+            except Exception:
+                pass
             for p in paths:
                 files.append(('files', (Path(p).name, open(p, 'rb'), mimetypes.guess_type(p)[0] or 'image/jpeg')))
             data = {"target_class": target}
@@ -602,6 +711,13 @@ def create_abstract_captcha() -> Dict[str, Any]:
                 resp = client.post(ABSTRACT_API_URL, data=data, files=files)
                 resp.raise_for_status()
                 probs_local: List[float] = resp.json().get("probs", [])
+            try:
+                elapsed_ms = int((time.time() - start_ts) * 1000)
+                print(
+                    f"✅ [abstract-batch<-ml] status={resp.status_code}, probs_len={len(probs_local)}, took={elapsed_ms}ms"
+                )
+            except Exception:
+                pass
             for _, f in files:
                 try:
                     f[1].close()
@@ -609,7 +725,11 @@ def create_abstract_captcha() -> Dict[str, Any]:
                     pass
             return probs_local
         except Exception as e:
-            print(f"❌ Abstract ML batch request failed: {e}")
+            try:
+                elapsed_ms = int((time.time() - start_ts) * 1000) if 'start_ts' in locals() else None
+                print(f"❌ Abstract ML batch request failed: {e} took={elapsed_ms}ms")
+            except Exception:
+                print(f"❌ Abstract ML batch request failed: {e}")
             return [random.random() for _ in paths]
 
     probs = _batch_predict_prob(candidate_paths, target_class)
@@ -707,6 +827,23 @@ def get_abstract_captcha_image(cid: str, idx: int, sig: str):
         path = Path(session.image_paths[idx])
     except Exception:
         raise HTTPException(status_code=404, detail="Image index invalid")
+
+    # 1) production: 프리사인드 URL 발급 후 302 리다이렉트
+    if ENV == "production":
+        key = _map_local_to_key(str(path))
+        if key:
+            url = _presign_url_for_key(key)
+            if url:
+                return RedirectResponse(url=url, status_code=302)
+
+    # 1.5) legacy: ASSET_BASE_URL 설정 시 간단 리다이렉트(공개 버킷일 때만)
+    if ENV == "production" and ASSET_BASE_URL:
+        rel = _map_local_to_key(str(path))
+        if rel:
+            asset_url = f"{ASSET_BASE_URL.rstrip('/')}" + "/" + rel
+            return RedirectResponse(url=asset_url, status_code=302)
+
+    # 2) 프록시 실패 시 로컬 파일 폴백
     if not path.exists():
         raise HTTPException(status_code=404, detail="Image file missing")
     if DEBUG_ABSTRACT_VERIFY:
@@ -718,7 +855,7 @@ def get_abstract_captcha_image(cid: str, idx: int, sig: str):
             except Exception:
                 is_pos = False
             print(
-                f"🖼️ [abstract-image] cid={cid}, idx={idx}, is_positive={is_pos}, positives={positives}, file='{path.name}'"
+                f"🖼️ [abstract-image local] cid={cid}, idx={idx}, is_positive={is_pos}, positives={positives}, file='{path.name}'"
             )
         except Exception:
             pass
