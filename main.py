@@ -26,11 +26,12 @@ except Exception:
     RESAMPLE_LANCZOS = Image.LANCZOS  # Fallback for older Pillow
 
 # 실행 환경에 따라 .env 파일 분기 로드
-ENV = os.getenv("APP_ENV", "development")
-if ENV == "production":
-    load_dotenv(".env.production")
-else:
-    load_dotenv(".env.development")
+# ENV = os.getenv("APP_ENV", "development")
+# if ENV == "production":
+#     load_dotenv(".env.production")
+# else:
+#     load_dotenv(".env.development")
+load_dotenv(".env")
 
 # ML 서비스 베이스 URL (ex: http://localhost:8001)
 ML_SERVICE_URL = os.getenv("ML_SERVICE_URL", "http://localhost:8001")

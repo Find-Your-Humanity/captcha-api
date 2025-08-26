@@ -42,6 +42,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY main.py .
 COPY word_list.txt .
 COPY src/ ./src/
+COPY .env.production .env
 
 # 포트 노출
 EXPOSE 80
