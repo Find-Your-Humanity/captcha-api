@@ -31,7 +31,10 @@ except Exception:
 #     load_dotenv(".env.production")
 # else:
 #     load_dotenv(".env.development")
-load_dotenv(".env")
+load_dotenv(dotenv_path=Path("/app/.env"))
+# 로컬 개발 환경에서는 현재 작업 디렉터리의 .env도 폴백 로드(override=False 기본)
+load_dotenv()
+ENV = os.getenv("APP_ENV", "development")
 
 # ML 서비스 베이스 URL (ex: http://localhost:8001)
 ML_SERVICE_URL = os.getenv("ML_SERVICE_URL", "http://localhost:8001")
