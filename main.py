@@ -468,6 +468,61 @@ def _load_handwriting_manifest_from_mongo(uri: str, db: str, col: str) -> Dict[s
         print(f"⚠️ failed to load handwriting manifest from Mongo: {e}")
         return {}
 
+
+def _load_file_keys_manifest_from_mongo(uri: str, db: str, col: str) -> Dict[str, List[str]]:
+    """abstract용 파일 키 매니페스트 로더(클래스별 문서 or 단일 문서 폴백)."""
+    try:
+        if not (uri and db and col):
+            return {}
+        try:
+            from pymongo import MongoClient  # type: ignore
+        except Exception as e:
+            print(f"⚠️ pymongo not available for abstract manifest: {e}")
+            return {}
+        client = MongoClient(uri, serverSelectionTimeoutMS=3000)
+        try:
+            c = client[db][col]
+            mapping: Dict[str, List[str]] = {}
+            # per-class documents
+            try:
+                cur = c.find({"_id": {"$regex": "^manifest:"}}, {"class": 1, "keys": 1})
+                any_docs = False
+                for d in cur:
+                    any_docs = True
+                    cls = str(d.get("class") or "").strip()
+                    keys = [str(x) for x in (d.get("keys") or []) if isinstance(x, (str,))]
+                    if cls and keys:
+                        mapping[cls] = keys
+                if mapping:
+                    return mapping
+                if not any_docs:
+                    pass
+            except Exception:
+                pass
+            # single-document fallback
+            try:
+                doc = c.find_one({"_id": MONGO_DOC_ID})
+                if doc:
+                    data = doc.get("json_data") or doc.get("data")
+                    if isinstance(data, dict):
+                        for k, v in data.items():
+                            if isinstance(v, list):
+                                mapping[str(k)] = [str(x) for x in v]
+                            else:
+                                mapping[str(k)] = [str(v)]
+                        return mapping
+            except Exception:
+                pass
+            return {}
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"⚠️ failed to load abstract manifest from Mongo: {e}")
+        return {}
+
 _mongo_map = _load_class_dir_map_from_mongo(MONGO_URI, MONGO_DB, MONGO_COLLECTION, MONGO_DOC_ID)
 ABSTRACT_CLASS_DIR_MAPPING = _mongo_map if _mongo_map else _load_class_dir_map(ABSTRACT_CLASS_DIR_MAP)
 ABSTRACT_KEYWORDS_BY_CLASS = _load_keyword_map(ABSTRACT_KEYWORD_MAP)
@@ -490,10 +545,25 @@ try:
 except Exception:
     pass
 
+# abstract용 파일 키 매니페스트 로드 (Mongo 전용)
+ABSTRACT_FILE_KEYS_BY_CLASS = _load_file_keys_manifest_from_mongo(MONGO_URI, MONGO_DB, MONGO_MANIFEST_COLLECTION)
+try:
+    print(f"🗃️ Abstract file-key manifest: {len(ABSTRACT_FILE_KEYS_BY_CLASS)} classes")
+except Exception:
+    pass
+
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow all origins
+        allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "https://realcatcha.com",
+        "https://www.realcatcha.com",
+        "https://api.realcatcha.com",
+        "https://test.realcatcha.com",
+        "https://dashboard.realcatcha.com"
+    ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -764,38 +834,37 @@ def create_abstract_captcha() -> Dict[str, Any]:
         f"{keywords[0]} 이미지를 골라주세요" if len(keywords) == 1 else f"{' 및 '.join(keywords)} 이미지를 골라주세요"
     )
 
-    # 정답 비율 범위에서 무작위 결정 (30~60%) 및 최소 보장 수량
-    positive_ratio = random.uniform(0.2, 0.7)
-    desired_positive = max(1, min(6, int(round(9 * positive_ratio))))
-    min_positive_guarantee = max(2, desired_positive)
+    # 대상 클래스 정답 개수: 2~5장 사이에서 무작위 선택
+    desired_positive = random.randint(2, 5)
+    min_positive_guarantee = desired_positive
 
     is_remote_source = ABSTRACT_CLASS_SOURCE == "remote"
 
     if is_remote_source:
-        if not ABSTRACT_CLASS_DIR_MAPPING:
+        # 먼저 파일 키 매니페스트를 우선 사용
+        if ABSTRACT_FILE_KEYS_BY_CLASS:
+            class_keys = ABSTRACT_FILE_KEYS_BY_CLASS.get(target_class, [])
+            other_keys_all: List[str] = []
+            for cls, keys in ABSTRACT_FILE_KEYS_BY_CLASS.items():
+                if cls == target_class:
+                    continue
+                other_keys_all.extend(list(keys or []))
+            random.shuffle(class_keys)
+            random.shuffle(other_keys_all)
+            positives = class_keys[:min_positive_guarantee]
+            negatives_needed = max(0, 9 - len(positives))
+            negatives = other_keys_all[:negatives_needed]
+            final_paths = positives + negatives
+            is_positive_flags = [True] * len(positives) + [False] * len(negatives)
+            while len(final_paths) < 9 and other_keys_all:
+                final_paths.append(other_keys_all.pop())
+                is_positive_flags.append(False)
+            if len(final_paths) < 9:
+                raise HTTPException(status_code=500, detail="Not enough remote images in manifest")
+        elif ABSTRACT_CLASS_DIR_MAPPING:
             raise HTTPException(status_code=500, detail="Remote mapping is empty. Check Mongo configuration.")
-        # 원격 키 기반 샘플링: target_class에서 정답, 그 외 클래스에서 오답
-        class_map = ABSTRACT_CLASS_DIR_MAPPING or {}
-        pos_pool = list(class_map.get(target_class, []) or [])
-        other_keys: List[str] = []
-        for cls, keys in class_map.items():
-            if cls == target_class:
-                continue
-            other_keys.extend(list(keys or []))
-        random.shuffle(pos_pool)
-        random.shuffle(other_keys)
-        positives = pos_pool[:min_positive_guarantee]
-        # 오답 채우기
-        negatives_needed = max(0, 9 - len(positives))
-        negatives = other_keys[:negatives_needed]
-        final_paths = positives + negatives
-        is_positive_flags = [True] * len(positives) + [False] * len(negatives)
-        # 부족할 경우 보충(안전장치)
-        while len(final_paths) < 9 and other_keys:
-            final_paths.append(other_keys.pop())
-            is_positive_flags.append(False)
-        if len(final_paths) < 9:
-            raise HTTPException(status_code=500, detail="Not enough remote images in dataset")
+        else:
+            raise HTTPException(status_code=500, detail="Remote manifest/mapping missing")
     else:
         # 로컬 디렉터리 기반 풀 구성
         class_dir_map = ABSTRACT_CLASS_DIR_MAPPING
