@@ -1,0 +1,14 @@
+{
+  "금붕어": ["images/dataset/n01443537/"],
+  "웜뱃": ["images/dataset/n01883070/"],
+  "공작": ["images/dataset/n01806143/"],
+  "긴꼬리흰앵무": ["images/dataset/n01819313/"],
+  "금화조": ["images/dataset/n01531178/"],
+  "파랑새류": ["images/dataset/n01828970/"],
+  "코뿔새": ["images/dataset/n01829413/"],
+  "까치": ["images/dataset/n01582220/"],
+  "검은고니": ["images/dataset/n01860187/"],
+  "무지개앵무": ["images/dataset/n01820546/"],
+  "고양이": ["images/dataset/catdog_cat/"],
+  "개":   ["images/dataset/catdog_dog/"]
+}
