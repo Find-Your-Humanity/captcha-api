@@ -54,8 +54,6 @@ ABSTRACT_CLASS_DIR_MAP = os.getenv("ABSTRACT_CLASS_DIR_MAP", str(Path(__file__).
 ABSTRACT_CLASS_SOURCE = os.getenv("ABSTRACT_CLASS_SOURCE", "local").lower()
 # 클래스별 키워드 맵 JSON 경로 (선택; 백엔드 디렉터리 기본값)
 ABSTRACT_KEYWORD_MAP = os.getenv("ABSTRACT_KEYWORD_MAP", str(Path(__file__).resolve().parent / "abstract_keyword_map.json"))
-# 백엔드 테스트 모드: ML 호출 스킵하고 고정 점수 사용
-TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
 HANDWRITING_MANIFEST_PATH = os.getenv("HANDWRITING_MANIFEST_PATH", "handwriting_manifest.json")
 SUCCESS_REDIRECT_URL = os.getenv("SUCCESS_REDIRECT_URL")
 OCR_API_URL = f"{ML_SERVICE_URL.rstrip('/')}" + "/predict-text"
@@ -355,16 +353,7 @@ def _verify_image_token(challenge_id: str, image_index: int, signature: str) -> 
         return False
 
 
-# 서버 시작 시 매니페스트 로드 및 챌린지 선택
-HANDWRITING_MANIFEST = _load_handwriting_manifest(HANDWRITING_MANIFEST_PATH)
-_select_handwriting_challenge()
-try:
-    print(
-        f"✍️ Handwriting manifest loaded: classes={len(HANDWRITING_MANIFEST.keys()) if HANDWRITING_MANIFEST else 0}, "
-        f"current_class={HANDWRITING_CURRENT_CLASS}, samples={len(HANDWRITING_CURRENT_IMAGES)}"
-    )
-except Exception:
-    pass
+# handwriting 매니페스트는 아래 Mongo 설정 이후에 로드합니다.
 
 # 단어 리스트 로드 로그
 ABSTRACT_CLASS_LIST = _load_word_list(WORD_LIST_PATH)
@@ -379,6 +368,7 @@ MONGO_URI = os.getenv("MONGO_URI", os.getenv("MONGO_URL", ""))
 MONGO_DB = os.getenv("MONGO_DB", "")
 MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "")
 MONGO_DOC_ID = os.getenv("MONGO_DOC_ID", "abstract_class_dir_map")
+MONGO_MANIFEST_COLLECTION = os.getenv("MONGO_MANIFEST_COLLECTION", os.getenv("MONGO_COLLECTION", ""))
 
 def _load_class_dir_map_from_mongo(uri: str, db: str, col: str, doc_id: str) -> Dict[str, List[str]]:
     try:
@@ -424,6 +414,60 @@ def _load_class_dir_map_from_mongo(uri: str, db: str, col: str, doc_id: str) -> 
         print(f"⚠️ failed to load class_dir_map from Mongo: {e}")
         return {}
 
+
+def _load_handwriting_manifest_from_mongo(uri: str, db: str, col: str) -> Dict[str, List[str]]:
+    try:
+        if not (uri and db and col):
+            return {}
+        try:
+            from pymongo import MongoClient  # type: ignore
+        except Exception as e:
+            print(f"⚠️ pymongo not available for handwriting manifest: {e}")
+            return {}
+        client = MongoClient(uri, serverSelectionTimeoutMS=3000)
+        try:
+            c = client[db][col]
+            mapping: Dict[str, List[str]] = {}
+            # per-class documents
+            try:
+                cur = c.find({"_id": {"$regex": "^manifest:"}}, {"class": 1, "keys": 1})
+                any_docs = False
+                for d in cur:
+                    any_docs = True
+                    cls = str(d.get("class") or "").strip()
+                    keys = [str(x) for x in (d.get("keys") or []) if isinstance(x, (str,))]
+                    if cls and keys:
+                        mapping[cls] = keys
+                if mapping:
+                    return mapping
+                if not any_docs:
+                    pass
+            except Exception:
+                pass
+            # single-document fallback
+            try:
+                doc = c.find_one({"_id": MONGO_DOC_ID})
+                if doc:
+                    data = doc.get("json_data") or doc.get("data")
+                    if isinstance(data, dict):
+                        for k, v in data.items():
+                            if isinstance(v, list):
+                                mapping[str(k)] = [str(x) for x in v]
+                            else:
+                                mapping[str(k)] = [str(v)]
+                        return mapping
+            except Exception:
+                pass
+            return {}
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"⚠️ failed to load handwriting manifest from Mongo: {e}")
+        return {}
+
 _mongo_map = _load_class_dir_map_from_mongo(MONGO_URI, MONGO_DB, MONGO_COLLECTION, MONGO_DOC_ID)
 ABSTRACT_CLASS_DIR_MAPPING = _mongo_map if _mongo_map else _load_class_dir_map(ABSTRACT_CLASS_DIR_MAP)
 ABSTRACT_KEYWORDS_BY_CLASS = _load_keyword_map(ABSTRACT_KEYWORD_MAP)
@@ -431,6 +475,17 @@ try:
     print(
         f"🗂️ ClassDirMap loaded: {len(ABSTRACT_CLASS_DIR_MAPPING)} classes; "
         f"🔤 KeywordMap loaded: {len(ABSTRACT_KEYWORDS_BY_CLASS)} classes"
+    )
+except Exception:
+    pass
+
+# 서버 시작 시 handwriting 매니페스트 로드 (Mongo 전용) 및 샘플 선택
+HANDWRITING_MANIFEST = _load_handwriting_manifest_from_mongo(MONGO_URI, MONGO_DB, MONGO_MANIFEST_COLLECTION)
+_select_handwriting_challenge()
+try:
+    print(
+        f"✍️ Handwriting manifest loaded: classes={len(HANDWRITING_MANIFEST.keys()) if HANDWRITING_MANIFEST else 0}, "
+        f"current_class={HANDWRITING_CURRENT_CLASS}, samples={len(HANDWRITING_CURRENT_IMAGES)}"
     )
 except Exception:
     pass
@@ -489,29 +544,22 @@ def next_captcha(request: CaptchaRequest):
     except Exception:
         pass
 
-    if TEST_MODE:
-        # 테스트용 고정 점수 (원하면 30/50/80 등으로 조절하여 단계 테스트)
-        confidence_score = 30
+    try:
+        # ML API 서버에 요청
+        response = httpx.post(ML_PREDICT_BOT_URL, json={"behavior_data": behavior_data})
+        response.raise_for_status()
+        result = response.json()
+
+        confidence_score = result.get("confidence_score", 50)
+        is_bot = result.get("is_bot", False)
+        ML_SERVICE_USED = True
+        print(f"🤖 ML API 결과: 신뢰도={confidence_score}, 봇여부={is_bot}")
+
+    except Exception as e:
+        print(f"❌ ML 서비스 호출 실패: {e}")
+        confidence_score = 75
         is_bot = False
         ML_SERVICE_USED = False
-        print("🧪 TEST_MODE: ML 호출 없이 고정 점수 사용 (confidence=30)")
-    else:
-        try:
-            #ML API 서버에 요청
-            response = httpx.post(ML_PREDICT_BOT_URL, json={"behavior_data": behavior_data})
-            response.raise_for_status()
-            result = response.json()
-
-            confidence_score = result.get("confidence_score", 50)
-            is_bot = result.get("is_bot", False)
-            ML_SERVICE_USED = True
-            print(f"🤖 ML API 결과: 신뢰도={confidence_score}, 봇여부={is_bot}")
-
-        except Exception as e:
-            print(f"❌ ML 서비스 호출 실패: {e}")
-            confidence_score = 75
-            is_bot = False
-            ML_SERVICE_USED = False
 
     # 신뢰도 기반 캡차 타입 결정
     # 점수대에 따라 캡차 타입 분기 (운영 시 가중치 조정 가능)
