@@ -5,3 +5,4 @@ httpx==0.25.1
 python-dotenv==1.0.1
 Pillow==10.1.0
 boto3==1.34.69
+pymongo==4.8.0

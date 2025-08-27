@@ -20,6 +20,7 @@ import hmac
 import hashlib
 import mimetypes
 import threading
+from typing import Optional as _OptionalType
 try:
     RESAMPLE_LANCZOS = Image.Resampling.LANCZOS  # Pillow >= 9.1
 except Exception:
@@ -47,8 +48,10 @@ ABSTRACT_HMAC_SECRET = os.getenv("ABSTRACT_HMAC_SECRET", "change-this-secret")
 WORD_LIST_PATH = os.getenv("WORD_LIST_PATH", str(Path(__file__).resolve().parent / "word_list.txt"))
 # 추출 이미지 루트 디렉토리 (로컬 파일 제공; 스토리지 사용 시 키 매핑 기준)
 ABSTRACT_IMAGE_ROOT = os.getenv("ABSTRACT_IMAGE_ROOT", str(Path(__file__).resolve().parents[1] / "abstractcaptcha"))
-# 라벨 기반 샘플링: 클래스→디렉터리(들) 매핑 JSON 경로 (선택; 백엔드 디렉터리 기본값)
+# 라벨 기반 샘플링: 클래스→경로(들) 매핑 JSON 경로 (선택; 백엔드 디렉터리 기본값)
 ABSTRACT_CLASS_DIR_MAP = os.getenv("ABSTRACT_CLASS_DIR_MAP", str(Path(__file__).resolve().parent / "abstract_class_dir_map.json"))
+# 매핑 소스 모드: local(로컬 디렉터리 경로), remote(오브젝트 스토리지 키 목록)
+ABSTRACT_CLASS_SOURCE = os.getenv("ABSTRACT_CLASS_SOURCE", "local").lower()
 # 클래스별 키워드 맵 JSON 경로 (선택; 백엔드 디렉터리 기본값)
 ABSTRACT_KEYWORD_MAP = os.getenv("ABSTRACT_KEYWORD_MAP", str(Path(__file__).resolve().parent / "abstract_keyword_map.json"))
 # 백엔드 테스트 모드: ML 호출 스킵하고 고정 점수 사용
@@ -70,6 +73,7 @@ OBJECT_STORAGE_BUCKET = os.getenv("OBJECT_STORAGE_BUCKET")
 OBJECT_STORAGE_ACCESS_KEY = os.getenv("OBJECT_STORAGE_ACCESS_KEY")
 OBJECT_STORAGE_SECRET_KEY = os.getenv("OBJECT_STORAGE_SECRET_KEY")
 PRESIGN_TTL_SECONDS = int(os.getenv("PRESIGN_TTL_SECONDS", "120"))
+OBJECT_LIST_MAX_KEYS = int(os.getenv("OBJECT_LIST_MAX_KEYS", "300"))
 
 app = FastAPI()
 
@@ -94,7 +98,7 @@ class AbstractVerifyRequest(BaseModel):
 
 
 class AbstractCaptchaSession:
-    def __init__(self, challenge_id: str, target_class: str, image_paths: List[str], is_positive: List[bool], ttl_seconds: int, keywords: List[str], created_at: float):
+    def __init__(self, challenge_id: str, target_class: str, image_paths: List[str], is_positive: List[bool], ttl_seconds: int, keywords: List[str], created_at: float, is_remote: bool = False):
         self.challenge_id = challenge_id
         self.target_class = target_class
         self.image_paths = image_paths
@@ -103,6 +107,7 @@ class AbstractCaptchaSession:
         self.keywords = keywords
         self.created_at = created_at
         self.attempts = 0
+        self.is_remote = is_remote
 
     def is_expired(self) -> bool:
         return (time.time() - self.created_at) > self.ttl_seconds
@@ -262,6 +267,9 @@ def _load_class_dir_map(path: str) -> Dict[str, List[str]]:
         return {}
 
 
+# Postgres 로더 제거: Mongo만 사용
+
+
 def _sample_images_from_dirs(dirs: List[str], desired_count: int) -> List[str]:
     paths: List[str] = []
     for d in dirs:
@@ -365,8 +373,59 @@ try:
 except Exception:
     pass
 
-# 클래스 디렉토리 매핑 및 키워드 매핑 로드
-ABSTRACT_CLASS_DIR_MAPPING = _load_class_dir_map(ABSTRACT_CLASS_DIR_MAP)
+# 클래스 디렉토리 매핑 및 키워드 매핑 로드 (Mongo 우선, 파일 폴백)
+# Mongo 설정
+MONGO_URI = os.getenv("MONGO_URI", os.getenv("MONGO_URL", ""))
+MONGO_DB = os.getenv("MONGO_DB", "")
+MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "")
+MONGO_DOC_ID = os.getenv("MONGO_DOC_ID", "abstract_class_dir_map")
+
+def _load_class_dir_map_from_mongo(uri: str, db: str, col: str, doc_id: str) -> Dict[str, List[str]]:
+    try:
+        if not (uri and db and col and doc_id):
+            return {}
+        try:
+            from pymongo import MongoClient  # type: ignore
+        except Exception as e:
+            print(f"⚠️ pymongo not available: {e}")
+            return {}
+        client = MongoClient(uri, serverSelectionTimeoutMS=3000)
+        try:
+            collection = client[db][col]
+            mapping: Dict[str, List[str]] = {}
+            # 1) doc_id가 지정되어 있으면 그 도큐먼트 우선 시도
+            if doc_id:
+                doc = collection.find_one({"_id": doc_id})
+                if doc:
+                    data = doc.get("json_data") or doc.get("data") or {k: v for k, v in doc.items() if k not in ("_id",)}
+                    if isinstance(data, dict):
+                        for k, v in data.items():
+                            if isinstance(v, list):
+                                mapping[str(k)] = [str(x) for x in v]
+                            else:
+                                mapping[str(k)] = [str(v)]
+                        return mapping
+            # 2) 컬렉션의 모든 도큐먼트를 스캔하여 name/cdn_prefix로 구성
+            #    { name: [cdn_prefix], ... } 형태로 매핑 생성
+            cursor = collection.find({}, {"name": 1, "cdn_prefix": 1})
+            for d in cursor:
+                cls = str(d.get("name") or "").strip()
+                prefix = str(d.get("cdn_prefix") or "").strip()
+                if not cls or not prefix:
+                    continue
+                mapping.setdefault(cls, []).append(prefix)
+            return mapping
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"⚠️ failed to load class_dir_map from Mongo: {e}")
+        return {}
+
+_mongo_map = _load_class_dir_map_from_mongo(MONGO_URI, MONGO_DB, MONGO_COLLECTION, MONGO_DOC_ID)
+ABSTRACT_CLASS_DIR_MAPPING = _mongo_map if _mongo_map else _load_class_dir_map(ABSTRACT_CLASS_DIR_MAP)
 ABSTRACT_KEYWORDS_BY_CLASS = _load_keyword_map(ABSTRACT_KEYWORD_MAP)
 try:
     print(
@@ -668,121 +727,130 @@ def create_abstract_captcha() -> Dict[str, Any]:
     # 정답 비율 범위에서 무작위 결정 (30~60%) 및 최소 보장 수량
     positive_ratio = random.uniform(0.2, 0.7)
     desired_positive = max(1, min(6, int(round(9 * positive_ratio))))
-    min_positive_guarantee = max(2, desired_positive)  # 최소 3장은 보장
+    min_positive_guarantee = max(2, desired_positive)
 
-    # 라벨 매핑 로드 (선택)
-    class_dir_map = ABSTRACT_CLASS_DIR_MAPPING
-    guaranteed_positive_paths: List[str] = []
-    if class_dir_map and target_class in class_dir_map:
-        guaranteed_positive_paths = _sample_images_from_dirs(class_dir_map[target_class], desired_count=min_positive_guarantee)
+    is_remote_source = ABSTRACT_CLASS_SOURCE == "remote"
 
-    # 후보 풀 구성: 보장 정답 + 무작위
-    base_pool_size = 60
-    candidate_paths = list(guaranteed_positive_paths)
-    if len(candidate_paths) < base_pool_size:
-        # 보장된 타겟 디렉터리를 제외하고 랜덤 샘플링하여 오답 후보 밀도를 높임
-        exclude_dirs = class_dir_map.get(target_class, []) if class_dir_map else []
-        extra = _iter_random_images_excluding(ABSTRACT_IMAGE_ROOT, exclude_dirs=exclude_dirs, sample_size=base_pool_size - len(candidate_paths))
-        # 중복 제거
-        seen = set(candidate_paths)
-        for p in extra:
-            if p not in seen:
-                candidate_paths.append(p)
-                seen.add(p)
-    if len(candidate_paths) < 12:
-        raise HTTPException(status_code=500, detail="Not enough abstract images in dataset")
+    if is_remote_source:
+        if not ABSTRACT_CLASS_DIR_MAPPING:
+            raise HTTPException(status_code=500, detail="Remote mapping is empty. Check Mongo configuration.")
+        # 원격 키 기반 샘플링: target_class에서 정답, 그 외 클래스에서 오답
+        class_map = ABSTRACT_CLASS_DIR_MAPPING or {}
+        pos_pool = list(class_map.get(target_class, []) or [])
+        other_keys: List[str] = []
+        for cls, keys in class_map.items():
+            if cls == target_class:
+                continue
+            other_keys.extend(list(keys or []))
+        random.shuffle(pos_pool)
+        random.shuffle(other_keys)
+        positives = pos_pool[:min_positive_guarantee]
+        # 오답 채우기
+        negatives_needed = max(0, 9 - len(positives))
+        negatives = other_keys[:negatives_needed]
+        final_paths = positives + negatives
+        is_positive_flags = [True] * len(positives) + [False] * len(negatives)
+        # 부족할 경우 보충(안전장치)
+        while len(final_paths) < 9 and other_keys:
+            final_paths.append(other_keys.pop())
+            is_positive_flags.append(False)
+        if len(final_paths) < 9:
+            raise HTTPException(status_code=500, detail="Not enough remote images in dataset")
+    else:
+        # 로컬 디렉터리 기반 풀 구성
+        class_dir_map = ABSTRACT_CLASS_DIR_MAPPING
+        guaranteed_positive_paths: List[str] = []
+        if class_dir_map and target_class in class_dir_map:
+            guaranteed_positive_paths = _sample_images_from_dirs(class_dir_map[target_class], desired_count=min_positive_guarantee)
 
-    # ml-service 배치 확률 요청
-    def _batch_predict_prob(paths: List[str], target: str) -> List[float]:
-        try:
-            files = []
+        base_pool_size = 60
+        candidate_paths = list(guaranteed_positive_paths)
+        if len(candidate_paths) < base_pool_size:
+            exclude_dirs = class_dir_map.get(target_class, []) if class_dir_map else []
+            extra = _iter_random_images_excluding(ABSTRACT_IMAGE_ROOT, exclude_dirs=exclude_dirs, sample_size=base_pool_size - len(candidate_paths))
+            seen = set(candidate_paths)
+            for p in extra:
+                if p not in seen:
+                    candidate_paths.append(p)
+                    seen.add(p)
+        if len(candidate_paths) < 12:
+            raise HTTPException(status_code=500, detail="Not enough abstract images in dataset")
+
+        def _batch_predict_prob(paths: List[str], target: str) -> List[float]:
             try:
-                preview_names = [Path(p).name for p in paths[:5]]
-            except Exception:
-                preview_names = []
-            start_ts = time.time()
-            try:
-                print(
-                    f"🚚 [abstract-batch->ml] url={ABSTRACT_API_URL}, target={target}, num_files={len(paths)}, "
-                    f"preview={preview_names}"
-                )
-            except Exception:
-                pass
-            for p in paths:
-                files.append(('files', (Path(p).name, open(p, 'rb'), mimetypes.guess_type(p)[0] or 'image/jpeg')))
-            data = {"target_class": target}
-            with httpx.Client(timeout=30.0) as client:
-                resp = client.post(ABSTRACT_API_URL, data=data, files=files)
-                resp.raise_for_status()
-                probs_local: List[float] = resp.json().get("probs", [])
-            try:
-                elapsed_ms = int((time.time() - start_ts) * 1000)
-                print(
-                    f"✅ [abstract-batch<-ml] status={resp.status_code}, probs_len={len(probs_local)}, took={elapsed_ms}ms"
-                )
-            except Exception:
-                pass
-            for _, f in files:
+                files = []
                 try:
-                    f[1].close()
+                    preview_names = [Path(p).name for p in paths[:5]]
+                except Exception:
+                    preview_names = []
+                start_ts = time.time()
+                try:
+                    print(
+                        f"🚚 [abstract-batch->ml] url={ABSTRACT_API_URL}, target={target}, num_files={len(paths)}, "
+                        f"preview={preview_names}"
+                    )
                 except Exception:
                     pass
-            return probs_local
-        except Exception as e:
-            try:
-                elapsed_ms = int((time.time() - start_ts) * 1000) if 'start_ts' in locals() else None
-                print(f"❌ Abstract ML batch request failed: {e} took={elapsed_ms}ms")
-            except Exception:
-                print(f"❌ Abstract ML batch request failed: {e}")
-            return [random.random() for _ in paths]
+                for p in paths:
+                    files.append(('files', (Path(p).name, open(p, 'rb'), mimetypes.guess_type(p)[0] or 'image/jpeg')))
+                data = {"target_class": target}
+                with httpx.Client(timeout=30.0) as client:
+                    resp = client.post(ABSTRACT_API_URL, data=data, files=files)
+                    resp.raise_for_status()
+                    probs_local: List[float] = resp.json().get("probs", [])
+                try:
+                    elapsed_ms = int((time.time() - start_ts) * 1000)
+                    print(
+                        f"✅ [abstract-batch<-ml] status={resp.status_code}, probs_len={len(probs_local)}, took={elapsed_ms}ms"
+                    )
+                except Exception:
+                    pass
+                for _, f in files:
+                    try:
+                        f[1].close()
+                    except Exception:
+                        pass
+                return probs_local
+            except Exception as e:
+                try:
+                    elapsed_ms = int((time.time() - start_ts) * 1000) if 'start_ts' in locals() else None
+                    print(f"❌ Abstract ML batch request failed: {e} took={elapsed_ms}ms")
+                except Exception:
+                    print(f"❌ Abstract ML batch request failed: {e}")
+                return [random.random() for _ in paths]
 
-    probs = _batch_predict_prob(candidate_paths, target_class)
-
-    # 모델 기반으로 상위 확률을 정답 후보로 선정
-    sorted_indices = sorted(range(len(candidate_paths)), key=lambda i: probs[i], reverse=True)
-
-    # guaranteed_positive_paths는 무조건 정답으로 플래그
-    guaranteed_indices = set(i for i, p in enumerate(candidate_paths) if p in set(guaranteed_positive_paths))
-
-    selected_indices: List[int] = []
-    is_positive_flags: List[bool] = []
-
-    # 1) 보장 정답 먼저 채우기
-    for i in list(guaranteed_indices)[:min_positive_guarantee]:
-        selected_indices.append(i)
-        is_positive_flags.append(True)
-
-    # 2) 추가 정답이 필요하면 상위 확률에서 추가
-    i_ptr = 0
-    while len([flag for flag in is_positive_flags if flag]) < desired_positive and i_ptr < len(sorted_indices):
-        idx = sorted_indices[i_ptr]
-        i_ptr += 1
-        if idx in selected_indices:
-            continue
-        selected_indices.append(idx)
-        is_positive_flags.append(True)
-
-    # 3) 오답 채우기: 하위 확률에서 채움
-    neg_pool = list(reversed(sorted_indices))
-    j_ptr = 0
-    while len(selected_indices) < 9 and j_ptr < len(neg_pool):
-        idx = neg_pool[j_ptr]
-        j_ptr += 1
-        if idx in selected_indices or idx in guaranteed_indices:
-            continue
-        selected_indices.append(idx)
-        is_positive_flags.append(False)
-
-    # 4) 그래도 부족하면 중간값에서 보충
-    mid_pool = [i for i in sorted_indices if i not in selected_indices]
-    for idx in mid_pool:
-        if len(selected_indices) >= 9:
-            break
-        selected_indices.append(idx)
-        is_positive_flags.append(False)
-
-    # 최종 경로
-    final_paths = [candidate_paths[i] for i in selected_indices]
+        probs = _batch_predict_prob(candidate_paths, target_class)
+        sorted_indices = sorted(range(len(candidate_paths)), key=lambda i: probs[i], reverse=True)
+        guaranteed_indices = set(i for i, p in enumerate(candidate_paths) if p in set(guaranteed_positive_paths))
+        selected_indices: List[int] = []
+        is_positive_flags: List[bool] = []
+        for i in list(guaranteed_indices)[:min_positive_guarantee]:
+            selected_indices.append(i)
+            is_positive_flags.append(True)
+        i_ptr = 0
+        while len([flag for flag in is_positive_flags if flag]) < desired_positive and i_ptr < len(sorted_indices):
+            idx = sorted_indices[i_ptr]
+            i_ptr += 1
+            if idx in selected_indices:
+                continue
+            selected_indices.append(idx)
+            is_positive_flags.append(True)
+        neg_pool = list(reversed(sorted_indices))
+        j_ptr = 0
+        while len(selected_indices) < 9 and j_ptr < len(neg_pool):
+            idx = neg_pool[j_ptr]
+            j_ptr += 1
+            if idx in selected_indices or idx in guaranteed_indices:
+                continue
+            selected_indices.append(idx)
+            is_positive_flags.append(False)
+        mid_pool = [i for i in sorted_indices if i not in selected_indices]
+        for idx in mid_pool:
+            if len(selected_indices) >= 9:
+                break
+            selected_indices.append(idx)
+            is_positive_flags.append(False)
+        final_paths = [candidate_paths[i] for i in selected_indices]
 
     # 세션 저장
     challenge_id = uuid.uuid4().hex
@@ -795,6 +863,7 @@ def create_abstract_captcha() -> Dict[str, Any]:
         ttl_seconds=ttl_seconds,
         keywords=keywords,
         created_at=time.time(),
+        is_remote=is_remote_source,
     )
     with ABSTRACT_SESSIONS_LOCK:
         ABSTRACT_SESSIONS[challenge_id] = session
@@ -827,6 +896,23 @@ def get_abstract_captcha_image(cid: str, idx: int, sig: str):
         raise HTTPException(status_code=410, detail="Challenge expired or not found")
     if not _verify_image_token(cid, idx, sig):
         raise HTTPException(status_code=403, detail="Invalid image signature")
+    # 원격 키 모드: presign 혹은 ASSET_BASE_URL로 리다이렉트
+    if getattr(session, "is_remote", False):
+        try:
+            key_like = session.image_paths[idx]
+        except Exception:
+            raise HTTPException(status_code=404, detail="Image index invalid")
+        # presign 시도 (키 자체가 prefix일 수 있으므로 그대로 사용)
+        if ENV == "production":
+            url = _presign_url_for_key(str(key_like))
+            if url:
+                return RedirectResponse(url=url, status_code=302)
+            if ASSET_BASE_URL:
+                asset_url = f"{ASSET_BASE_URL.rstrip('/')}" + "/" + str(key_like).lstrip('/')
+                return RedirectResponse(url=asset_url, status_code=302)
+        # 개발 환경에서는 키 문자열을 반환할 수 없어 404 처리
+        raise HTTPException(status_code=404, detail="Remote asset not available without presign in non-production")
+    # 로컬 파일 모드
     try:
         path = Path(session.image_paths[idx])
     except Exception:
