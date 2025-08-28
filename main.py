@@ -622,15 +622,7 @@ except Exception:
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-        allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "https://realcatcha.com",
-        "https://www.realcatcha.com",
-        "https://api.realcatcha.com",
-        "https://test.realcatcha.com",
-        "https://dashboard.realcatcha.com"
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -890,7 +882,6 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         response["redirect_url"] = SUCCESS_REDIRECT_URL
     return response
 
-
 # ================= Abstract Captcha API =================
 
 @app.post("/api/abstract-captcha")
@@ -1073,86 +1064,8 @@ def create_abstract_captcha() -> Dict[str, Any]:
         "images": images,
     }
 
-# 세션 조회/만료 확인: 없거나 TTL 만료면 410.
-# 무결성 확인: sig가 HMAC(cid:idx)와 일치하지 않으면 403.
-# 경로 확인: 인덱스 범위/파일 존재 여부 검사. 잘못되면 404.
-# 응답: 파일 바이트를 읽고 MIME 추정 후 바디로 반환.
-@app.get("/api/abstract-captcha/image")
-def get_abstract_captcha_image(cid: str, idx: int, sig: str):
-    with ABSTRACT_SESSIONS_LOCK:
-        session = ABSTRACT_SESSIONS.get(cid)
-    if not session or session.is_expired():
-        raise HTTPException(status_code=410, detail="Challenge expired or not found")
-    if not _verify_image_token(cid, idx, sig):
-        raise HTTPException(status_code=403, detail="Invalid image signature")
-    # 원격 키 모드: presign 혹은 ASSET_BASE_URL로 리다이렉트
-    if getattr(session, "is_remote", False):
-        try:
-            key_like = session.image_paths[idx]
-        except Exception:
-            raise HTTPException(status_code=404, detail="Image index invalid")
-        # presign 시도 (키 자체가 prefix일 수 있으므로 그대로 사용)
-        if ENV == "production":
-            url = _presign_url_for_key(str(key_like))
-            if url:
-                return RedirectResponse(url=url, status_code=302)
-            if ASSET_BASE_URL:
-                asset_url = f"{ASSET_BASE_URL.rstrip('/')}" + "/" + str(key_like).lstrip('/')
-                return RedirectResponse(url=asset_url, status_code=302)
-        # 개발 환경에서는 키 문자열을 반환할 수 없어 404 처리
-        raise HTTPException(status_code=404, detail="Remote asset not available without presign in non-production")
-    # 로컬 파일 모드
-    try:
-        path = Path(session.image_paths[idx])
-    except Exception:
-        raise HTTPException(status_code=404, detail="Image index invalid")
-
-    # 1) production: 프리사인드 URL 발급 후 302 리다이렉트
-    if ENV == "production":
-        key = _map_local_to_key(str(path))
-        if key:
-            url = _presign_url_for_key(key)
-            if url:
-                return RedirectResponse(url=url, status_code=302)
-
-    # 1.5) legacy: ASSET_BASE_URL 설정 시 간단 리다이렉트(공개 버킷일 때만)
-    if ENV == "production" and ASSET_BASE_URL:
-        rel = _map_local_to_key(str(path))
-        if rel:
-            asset_url = f"{ASSET_BASE_URL.rstrip('/')}" + "/" + rel
-            return RedirectResponse(url=asset_url, status_code=302)
-
-    # 2) 프록시 실패 시 로컬 파일 폴백
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Image file missing")
-    if DEBUG_ABSTRACT_VERIFY:
-        try:
-            positives = [i for i, flag in enumerate(session.is_positive) if flag]
-            is_pos = False
-            try:
-                is_pos = bool(session.is_positive[idx])
-            except Exception:
-                is_pos = False
-            print(
-                f"🖼️ [abstract-image local] cid={cid}, idx={idx}, is_positive={is_pos}, positives={positives}, file='{path.name}'"
-            )
-        except Exception:
-            pass
-    data = path.read_bytes()
-    ctype = mimetypes.guess_type(str(path))[0] or "image/jpeg"
-    return Response(content=data, media_type=ctype)
-
-
 @app.post("/api/abstract-verify")
 def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
-    if DEBUG_ABSTRACT_VERIFY:
-        try:
-            print(
-                f"🧪 [abstract-verify] incoming: cid={req.challenge_id}, selections={list(req.selections or [])}, "
-                f"sigs={'none' if req.signatures is None else len(req.signatures)}"
-            )
-        except Exception:
-            pass
     with ABSTRACT_SESSIONS_LOCK:
         session = ABSTRACT_SESSIONS.get(req.challenge_id)
     if not session:
@@ -1216,12 +1129,5 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
     if not is_pass and attempts >= 2:
         payload["message"] = "Too many attempts; please try an easier challenge."
         payload["downshift"] = True
-    if DEBUG_ABSTRACT_VERIFY:
-        try:
-            preview = json.dumps(payload, ensure_ascii=False)
-            if len(preview) > 500:
-                preview = preview[:500] + "... (truncated)"
-            print(f"📦 [abstract-verify] payload: {preview}")
-        except Exception:
-            pass
+    # removed verbose payload preview log for abstract-verify
     return payload
