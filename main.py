@@ -370,6 +370,60 @@ MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "")
 MONGO_DOC_ID = os.getenv("MONGO_DOC_ID", "abstract_class_dir_map")
 MONGO_MANIFEST_COLLECTION = os.getenv("MONGO_MANIFEST_COLLECTION", os.getenv("MONGO_COLLECTION", ""))
 
+# ===== Behavior Data Mongo Settings =====
+# 운영에서 행동 데이터 저장을 제어하는 스위치와 대상 컬렉션 설정
+SAVE_BEHAVIOR_TO_MONGO = os.getenv("SAVE_BEHAVIOR_TO_MONGO", "false").lower() == "true"
+BEHAVIOR_MONGO_URI = os.getenv("MONGO_URL", "")
+BEHAVIOR_MONGO_DB = os.getenv("MONGO_DB", "")
+BEHAVIOR_MONGO_COLLECTION = os.getenv("BEHAVIOR_MONGO_COLLECTION", "behavior_data")
+
+# 지연 초기화용 전역 클라이언트 (스레드 세이프)
+_mongo_client_for_behavior = None
+
+def _get_behavior_mongo_client():
+    global _mongo_client_for_behavior
+    if _mongo_client_for_behavior is not None:
+        return _mongo_client_for_behavior
+    if not (SAVE_BEHAVIOR_TO_MONGO and BEHAVIOR_MONGO_URI):
+        return None
+    try:
+        from pymongo import MongoClient  # type: ignore
+        _mongo_client_for_behavior = MongoClient(BEHAVIOR_MONGO_URI, serverSelectionTimeoutMS=3000)
+        # 연결 확인 (예외 발생 시 캐시하지 않음)
+        _ = _mongo_client_for_behavior.server_info()
+        return _mongo_client_for_behavior
+    except Exception as e:
+        try:
+            print(f"⚠️ behavior Mongo connect failed: {e}")
+        except Exception:
+            pass
+        _mongo_client_for_behavior = None
+        return None
+
+def _save_behavior_to_mongo(doc: Dict[str, Any]) -> None:
+    """행동 데이터를 MongoDB에 비동기로 저장. 실패는 무시."""
+    if not SAVE_BEHAVIOR_TO_MONGO:
+        return
+    client = _get_behavior_mongo_client()
+    if not client or not BEHAVIOR_MONGO_DB or not BEHAVIOR_MONGO_COLLECTION:
+        return
+    def _worker(payload: Dict[str, Any]):
+        try:
+            client[BEHAVIOR_MONGO_DB][BEHAVIOR_MONGO_COLLECTION].insert_one(payload)
+        except Exception as e:
+            try:
+                print(f"⚠️ insert behavior_data failed: {e}")
+            except Exception:
+                pass
+    try:
+        threading.Thread(target=_worker, args=(doc,), daemon=True).start()
+    except Exception:
+        # 최후 폴백: 동기 시도 (에러 무시)
+        try:
+            client[BEHAVIOR_MONGO_DB][BEHAVIOR_MONGO_COLLECTION].insert_one(doc)
+        except Exception:
+            pass
+
 def _load_class_dir_map_from_mongo(uri: str, db: str, col: str, doc_id: str) -> Dict[str, List[str]]:
     try:
         if not (uri and db and col and doc_id):
@@ -587,6 +641,14 @@ def next_captcha(request: CaptchaRequest):
             f"page={{enter:{page.get('enterTime')}, exit:{page.get('exitTime')}, total:{page.get('totalTime')}}}, "
             f"approx={approx_bytes}B"
         )
+        # MongoDB 저장 (비동기)
+        try:
+            mongo_doc = {
+                "behavior_data": behavior_data,
+            }
+            _save_behavior_to_mongo(mongo_doc)
+        except Exception:
+            pass
         # 상세 샘플 로그 (앞 일부만 출력)
         try:
             sample = {
