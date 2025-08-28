@@ -129,6 +129,19 @@ def _map_local_to_key(local_path: str) -> Optional[str]:
     return str(rel).replace(os.sep, "/").lstrip("/")
 
 
+def _build_cdn_url(path_or_key: str, is_remote: bool) -> Optional[str]:
+    if not ASSET_BASE_URL:
+        return None
+    if is_remote:
+        key_like = str(path_or_key).lstrip("/")
+    else:
+        mapped = _map_local_to_key(str(path_or_key))
+        if not mapped:
+            return None
+        key_like = mapped.lstrip("/")
+    return f"{ASSET_BASE_URL.rstrip('/')}/{key_like}"
+
+
 def _presign_url_for_key(key: str) -> Optional[str]:
     if ENV != "production":
         return None
@@ -1041,10 +1054,15 @@ def create_abstract_captcha() -> Dict[str, Any]:
 
     # 응답용 이미지 URL 생성 (서명 포함)
     images: List[Dict[str, Any]] = []
-    for idx, _ in enumerate(final_paths):
-        sig = _sign_image_token(challenge_id, idx)
-        url = f"/api/abstract-captcha/image?cid={challenge_id}&idx={idx}&sig={sig}"
-        images.append({"id": idx, "url": url})
+    for idx, p in enumerate(final_paths):
+        cdn_url = _build_cdn_url(str(p), is_remote_source)
+        if not cdn_url:
+            # CDN 모드: 매핑 실패 시에도 API 프록시를 사용하지 않음
+            # 링크 생성 실패를 명확히 하기 위해 빈 URL을 넣거나 예외로 처리할 수 있음
+            # 여기서는 빈 URL로 표기
+            images.append({"id": idx, "url": ""})
+            continue
+        images.append({"id": idx, "url": cdn_url})
 
     return {
         "challenge_id": challenge_id,
