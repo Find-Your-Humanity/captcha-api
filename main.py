@@ -1055,6 +1055,17 @@ def create_abstract_captcha() -> Dict[str, Any]:
             continue
         images.append({"id": idx, "url": cdn_url})
 
+    # 디버그: 이미지 로드 시 정답 인덱스 및 샘플 URL 로그
+    if DEBUG_ABSTRACT_VERIFY:
+        try:
+            positives = [i for i, flag in enumerate(is_positive_flags) if flag]
+            sample_urls = [img.get("url", "") for img in images[:3]]
+            print(
+                f"🧩 [abstract-captcha] cid={challenge_id}, positives={positives}"
+            )
+        except Exception:
+            pass
+
     return {
         "challenge_id": challenge_id,
         "question": question,
@@ -1094,9 +1105,9 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     img_score = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
-    # 정답 판정: 사용자가 모든 정답을 선택했다면 통과(추가 선택은 허용)
+    # 정답 판정: 정답 인덱스 집합과 선택 집합이 "완전 일치"할 때만 통과
     positives_set = {i for i, is_pos in enumerate(session.is_positive) if is_pos}
-    is_pass = positives_set.issubset(selections_set)
+    is_pass = positives_set == selections_set
 
     if DEBUG_ABSTRACT_VERIFY:
         try:
