@@ -26,12 +26,6 @@ try:
 except Exception:
     RESAMPLE_LANCZOS = Image.LANCZOS  # Fallback for older Pillow
 
-# 실행 환경에 따라 .env 파일 분기 로드
-# ENV = os.getenv("APP_ENV", "development")
-# if ENV == "production":
-#     load_dotenv(".env.production")
-# else:
-#     load_dotenv(".env.development")
 load_dotenv(dotenv_path=Path("/app/.env"))
 # 로컬 개발 환경에서는 현재 작업 디렉터리의 .env도 폴백 로드(override=False 기본)
 load_dotenv()
@@ -57,8 +51,7 @@ ABSTRACT_KEYWORD_MAP = os.getenv("ABSTRACT_KEYWORD_MAP", str(Path(__file__).reso
 HANDWRITING_MANIFEST_PATH = os.getenv("HANDWRITING_MANIFEST_PATH", "handwriting_manifest.json")
 SUCCESS_REDIRECT_URL = os.getenv("SUCCESS_REDIRECT_URL")
 OCR_API_URL = f"{ML_SERVICE_URL.rstrip('/')}" + "/predict-text"
-OCR_REQUEST_FORMAT = os.getenv("OCR_REQUEST_FORMAT", "multipart").lower()  # 'json' | 'multipart'
-OCR_IMAGE_FIELD = os.getenv("OCR_IMAGE_FIELD")  # 포맷별 기본값 적용
+OCR_IMAGE_FIELD = os.getenv("OCR_IMAGE_FIELD")  # 기본값은 'file'
 DEBUG_SAVE_OCR_UPLOADS = os.getenv("DEBUG_SAVE_OCR_UPLOADS", "false").lower() == "true"
 DEBUG_OCR_DIR = os.getenv("DEBUG_OCR_DIR", "debug_uploads")
 DEBUG_ABSTRACT_VERIFY = os.getenv("DEBUG_ABSTRACT_VERIFY", "false").lower() == "true"
@@ -698,20 +691,9 @@ def next_captcha(request: CaptchaRequest):
         is_bot = False
         ML_SERVICE_USED = False
 
-    # 신뢰도 기반 캡차 타입 결정
-    # 점수대에 따라 캡차 타입 분기 (운영 시 가중치 조정 가능)
-    if confidence_score >= 70:
-        captcha_type = "abstract"
-        next_captcha = "abstractcaptcha"
-    elif confidence_score >= 40:
-        captcha_type = "abstract"
-        next_captcha = "abstractcaptcha"
-    elif confidence_score >= 20:
-        captcha_type = "abstract"
-        next_captcha = "abstractcaptcha"
-    else:
-        captcha_type = "abstract"
-        next_captcha = "abstractcaptcha"
+    # 신뢰도와 무관하게 Handwriting 캡차로 고정
+    captcha_type = "handwriting"
+    next_captcha = "handwritingcaptcha"
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
@@ -723,9 +705,19 @@ def next_captcha(request: CaptchaRequest):
         "is_bot_detected": is_bot if ML_SERVICE_USED else None
     }
 
-    # handwriting 단계 진입 시 프런트에 샘플 이미지 전달 (정답 텍스트는 서버에만 보관)
+    # handwriting 단계 진입 시 CDN URL로 샘플 이미지 전달
     if next_captcha == "handwritingcaptcha":
-        payload["handwriting_samples"] = HANDWRITING_CURRENT_IMAGES
+        try:
+            _select_handwriting_challenge()
+            keys = list(HANDWRITING_CURRENT_IMAGES or [])
+            urls: List[str] = []
+            for k in keys[:5]:
+                u = _build_cdn_url(str(k), is_remote=True)
+                if u:
+                    urls.append(u)
+            payload["handwriting_samples"] = urls
+        except Exception:
+            payload["handwriting_samples"] = []
 
     try:
         preview = {
@@ -742,7 +734,7 @@ def next_captcha(request: CaptchaRequest):
     return payload
 
 
-@app.post("/api/verify-handwriting")
+@app.post("/api/handwriting-verify")
 def verify_handwriting(request: HandwritingVerifyRequest):
     # data:image/png;base64,.... 형태 처리
     base64_str = request.image_base64 or ""
@@ -789,58 +781,28 @@ def verify_handwriting(request: HandwritingVerifyRequest):
             pass
         return {"success": False, "message": "No handwriting challenge is prepared."}
 
-    def _call_ocr(mode: str):
-        field = OCR_IMAGE_FIELD
-        if not field:
-            field = "image_base64" if mode == "json" else "file"
+    def _call_ocr_multipart():
+        field = OCR_IMAGE_FIELD or "file"
+        print(f"🔎 Calling OCR API (multipart): {OCR_API_URL} field={field}, payloadLen={len(image_bytes)}")
+        files = {field: ("handwriting.png", image_bytes, "image/png")}
+        return httpx.post(OCR_API_URL, files=files, timeout=20.0)
 
-        print(f"🔎 Calling OCR API: {OCR_API_URL} mode={mode}, field={field}, payloadLen={len(base64_str)}")
-        if mode == "multipart":
-            files = {field: ("handwriting.png", image_bytes, "image/png")}
-            return httpx.post(OCR_API_URL, files=files, timeout=20.0)
-        else:
-            # JSON으로 보낼 때도 원본 바이트를 base64로 인코딩하여 전송
-            body_b64 = base64.b64encode(image_bytes).decode("ascii")
-            body = {field: body_b64}
-            return httpx.post(OCR_API_URL, json=body, timeout=20.0)
-
+    # OCR은 항상 multipart로 전송
     ocr_json = None
-    first_mode = OCR_REQUEST_FORMAT if OCR_REQUEST_FORMAT in ("json", "multipart") else "json"
-    second_mode = "multipart" if first_mode == "json" else "json"
-
-    # 1차 시도
     try:
-        resp = _call_ocr(first_mode)
+        resp = _call_ocr_multipart()
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
-            # 실패 로그 상세 출력
             body_preview = e.response.text
             if len(body_preview) > 500:
                 body_preview = body_preview[:500] + "... (truncated)"
-            print(f"❌ OCR API {first_mode} failed: status={e.response.status_code}, body={body_preview}")
-            raise
+            print(f"❌ OCR API multipart failed: status={e.response.status_code}, body={body_preview}")
+            return {"success": False, "message": f"OCR API request failed: {e}"}
         ocr_json = resp.json()
-    except Exception:
-        # 2차 대체 포맷으로 재시도
-        try:
-            resp = _call_ocr(second_mode)
-            resp.raise_for_status()
-            ocr_json = resp.json()
-            print(f"🔁 Fallback to {second_mode} succeeded")
-        except Exception as e2:
-            try:
-                # 가능한 상세 에러 로그
-                if isinstance(e2, httpx.HTTPStatusError):
-                    body_preview = e2.response.text
-                    if len(body_preview) > 500:
-                        body_preview = body_preview[:500] + "... (truncated)"
-                    print(f"❌ OCR API {second_mode} failed: status={e2.response.status_code}, body={body_preview}")
-                else:
-                    print(f"❌ OCR API request failed: {e2}")
-            except Exception:
-                pass
-            return {"success": False, "message": f"OCR API request failed: {e2}"}
+    except Exception as e:
+        print(f"❌ OCR API request failed: {e}")
+        return {"success": False, "message": f"OCR API request failed: {e}"}
 
     # 로그에 과도한 출력 방지: 앞부분만 표시
     preview = str(ocr_json)
