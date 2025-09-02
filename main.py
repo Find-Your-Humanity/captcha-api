@@ -844,6 +844,47 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         response["redirect_url"] = SUCCESS_REDIRECT_URL
     return response
 
+@app.post("/api/handwriting-challenge")
+async def create_handwriting_challenge(x_api_key: str = Header(None, alias="X-API-Key")):
+    # API 키 검증
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="API key required")
+    
+    user_id = await validate_api_key(x_api_key)
+    if not user_id:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded or invalid API key")
+    
+    start_time = time.time()
+    
+    try:
+        # 새로운 handwriting 챌린지 생성
+        _select_handwriting_challenge()
+        keys = list(HANDWRITING_CURRENT_IMAGES or [])
+        urls: List[str] = []
+        for k in keys[:5]:
+            u = _build_cdn_url(str(k), is_remote=True)
+            if u:
+                urls.append(u)
+        
+        response = {
+            "samples": urls,
+            "ttl": 60,  # 60초 TTL
+            "message": "Handwriting challenge created successfully"
+        }
+        
+        # API 사용량 추적
+        response_time = int((time.time() - start_time) * 1000)  # 밀리초 단위
+        await track_api_usage(x_api_key, "/api/handwriting-challenge", 200, response_time)
+        
+        return response
+        
+    except Exception as e:
+        # API 사용량 추적 (실패한 경우에도)
+        response_time = int((time.time() - start_time) * 1000)
+        await track_api_usage(x_api_key, "/api/handwriting-challenge", 500, response_time)
+        
+        raise HTTPException(status_code=500, detail=f"Failed to create handwriting challenge: {str(e)}")
+
 # ================= Abstract Captcha API =================
 
 @app.post("/api/abstract-captcha")
