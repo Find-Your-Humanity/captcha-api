@@ -21,6 +21,7 @@ import hashlib
 import mimetypes
 import threading
 from typing import Optional as _OptionalType
+from dataclasses import dataclass
 try:
     RESAMPLE_LANCZOS = Image.Resampling.LANCZOS  # Pillow >= 9.1
 except Exception:
@@ -36,6 +37,8 @@ ML_SERVICE_URL = os.getenv("ML_SERVICE_URL", "http://localhost:8001")
 # 파생 URL (직접 결합)
 ML_PREDICT_BOT_URL = f"{ML_SERVICE_URL.rstrip('/')}" + "/predict-bot"
 ABSTRACT_API_URL = f"{ML_SERVICE_URL.rstrip('/')}" + "/predict-abstract-proba-batch"
+# YOLO image predict endpoint
+PREDICT_IMAGE_URL = f"{ML_SERVICE_URL.rstrip('/')}" + "/predict-image"
 # HMAC 서명 키
 ABSTRACT_HMAC_SECRET = os.getenv("ABSTRACT_HMAC_SECRET", "change-this-secret")
 # 추출 대상 단어 리스트 경로 (백엔드 디렉터리 기본값)
@@ -751,8 +754,6 @@ def next_captcha(request: CaptchaRequest):
         "is_bot_detected": is_bot if ML_SERVICE_USED else None
     }
 
-    # handwriting 단계 특화 페이로드는 비활성화
-
     try:
         preview = {
             "captcha_type": captcha_type,
@@ -1181,21 +1182,178 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
     return payload
 
 
-# ================= Image Captcha API (single image for 3x3 grid) =================
+@dataclass
+class ImageGridCaptchaSession:
+    challenge_id: str
+    image_url: str
+    target_label: str
+    correct_cells: List[int]
+    ttl_seconds: int
+    created_at: float
+    attempts: int = 0
+    boxes: List[Dict[str, Any]] = None  # [{x1,y1,x2,y2,conf,class_id,class_name}]
+    label_cells: Dict[str, List[int]] = None  # {label: [cells]}
+
+
+IMAGE_GRID_SESSIONS: Dict[str, ImageGridCaptchaSession] = {}
+IMAGE_GRID_LOCK = threading.Lock()
+
+# 셸 계산 함수
+# 최종적으로 클래스 이름: [해당 클래스 객체가 포함된 셀 번호]} 형태의 딕셔너리를 반환
+def _cells_from_boxes(width: int, height: int, boxes: List[Dict[str, Any]]) -> Dict[str, List[int]]:
+    w1 = width // 3
+    w2 = width // 3
+    w3 = width - (w1 + w2)
+    h1 = height // 3
+    h2 = height // 3
+    h3 = height - (h1 + h2)
+    xs = [0, w1, w1 + w2, width]
+    ys = [0, h1, h1 + h2, height]
+
+    def _overlap(a1, a2, b1, b2) -> int:
+        return max(0, min(a2, b2) - max(a1, b1))
+
+    def cell_index(r: int, c: int) -> int:
+        return r * 3 + c + 1
+
+    label_to_cells: Dict[str, set] = {}
+    for b in boxes:
+        x1 = int(max(0, min(width, int(b.get("x1", 0)))))
+        y1 = int(max(0, min(height, int(b.get("y1", 0)))))
+        x2 = int(max(0, min(width, int(b.get("x2", 0)))))
+        y2 = int(max(0, min(height, int(b.get("y2", 0)))))
+        cname = str(b.get("class_name", "")).strip()
+        if not cname or x2 <= x1 or y2 <= y1:
+            continue
+        for r in range(3):
+            for c in range(3):
+                cx1, cx2 = xs[c], xs[c + 1]
+                cy1, cy2 = ys[r], ys[r + 1]
+                ox = _overlap(x1, x2, cx1, cx2)
+                oy = _overlap(y1, y2, cy1, cy2)
+                if ox > 0 and oy > 0:
+                    label_to_cells.setdefault(cname, set()).add(cell_index(r, c))
+    return {k: sorted(list(v)) for k, v in label_to_cells.items()}
+
 
 @app.post("/api/imagecaptcha-challenge")
-def create_imagecaptcha_challenge() -> Dict[str, Any]:
-    """Mongo basic_manifest에서 임의의 키를 선택하여 CDN URL을 반환한다.
-    프론트는 이 URL 하나를 받아 3x3 그리드의 배경으로 사용한다.
-    """
+def create_image_grid_captcha() -> Dict[str, Any]:
     if not BASIC_IMAGE_KEYS:
-        raise HTTPException(status_code=500, detail="Basic manifest is empty. Configure BASIC_MANIFEST_COLLECTION.")
-    picked = random.choice(BASIC_IMAGE_KEYS)
-    url = _build_cdn_url(str(picked), is_remote=True)
+        raise HTTPException(status_code=500, detail="Basic manifest is empty")
+    key = random.choice(BASIC_IMAGE_KEYS)
+    url = _build_cdn_url(key, is_remote=True)
     if not url:
-        raise HTTPException(status_code=500, detail="ASSET_BASE_URL not configured or key mapping failed")
-    ts = int(time.time() * 1000)
+        raise HTTPException(status_code=500, detail="ASSET_BASE_URL misconfigured")
+
+    try:
+        resp = httpx.post(PREDICT_IMAGE_URL, json={"image_url": url}, timeout=25.0)
+        resp.raise_for_status()
+        pred = resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ML predict failed: {e}")
+
+    width = int(pred.get("width") or 0)
+    height = int(pred.get("height") or 0)
+    boxes = pred.get("boxes") or []
+    if width <= 0 or height <= 0:
+        raise HTTPException(status_code=500, detail="Invalid ML output (size)")
+
+    top = None
+    for b in boxes:
+        if top is None or float(b.get("conf", 0.0)) > float(top.get("conf", 0.0)):
+            top = b
+    if not top:
+        raise HTTPException(status_code=503, detail="No objects detected; retry")
+    target_label = str(top.get("class_name") or "").strip()
+    if not target_label:
+        raise HTTPException(status_code=500, detail="Missing class_name from ML")
+
+    label_cells = _cells_from_boxes(width, height, boxes)
+    correct_cells = label_cells.get(target_label, [])
+    if not correct_cells:
+        raise HTTPException(status_code=503, detail="No cells mapped; retry")
+
+    challenge_id = uuid.uuid4().hex
+    session = ImageGridCaptchaSession(
+        challenge_id=challenge_id,
+        image_url=url,
+        target_label=target_label,
+        correct_cells=correct_cells,
+        ttl_seconds=60,
+        created_at=time.time(),
+        boxes=boxes,
+        label_cells=label_cells,
+    )
+    with IMAGE_GRID_LOCK:
+        IMAGE_GRID_SESSIONS[challenge_id] = session
+
+    question = f"Select all images with a {target_label}."
     return {
-        "url": f"{url}?ts={ts}",
-        "ttl": 60,
+        "challenge_id": challenge_id,
+        "url": url,
+        "ttl": session.ttl_seconds,
+        "grid_size": 3,
+        "target_label": target_label,
+        "question": question,
     }
+
+
+class ImageGridVerifyRequest(BaseModel):
+    challenge_id: str
+    selections: List[int]
+
+
+@app.post("/api/imagecaptcha-verify")
+def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
+    with IMAGE_GRID_LOCK:
+        session = IMAGE_GRID_SESSIONS.get(req.challenge_id)
+    if not session:
+        return {"success": False, "message": "Challenge not found"}
+    if (time.time() - session.created_at) > session.ttl_seconds:
+        with IMAGE_GRID_LOCK:
+            IMAGE_GRID_SESSIONS.pop(req.challenge_id, None)
+        return {"success": False, "message": "Challenge expired"}
+
+    sel = sorted(set(int(x) for x in (req.selections or [])))
+    correct = sorted(set(session.correct_cells))
+    ok = sel == correct
+
+    with IMAGE_GRID_LOCK:
+        session.attempts += 1
+        attempts = session.attempts
+        if ok or attempts >= 2:
+            IMAGE_GRID_SESSIONS.pop(req.challenge_id, None)
+
+    # 디버그 정보 구성
+    try:
+        boxes_preview = [
+            {"class_name": str(b.get("class_name")), "conf": float(b.get("conf", 0.0))}
+            for b in (session.boxes or [])
+        ]
+    except Exception:
+        boxes_preview = []
+    # 파드 로그용 디버깅 출력
+    try:
+        boxes_preview_log = [
+            {"class": str(b.get("class_name")), "conf": round(float(b.get("conf", 0.0)), 3)}
+            for b in (session.boxes or [])
+        ]
+        print(
+            f"🔎 [/api/imagecaptcha-verify] target={session.target_label} success={ok} attempts={attempts} "
+            f"correct={correct} selections={sel} boxes={boxes_preview_log} label_cells={session.label_cells or {}}"
+        )
+    except Exception:
+        pass
+
+    payload = {
+        "success": ok,
+        "attempts": attempts,
+        "target_label": session.target_label,
+        "correct_cells": correct,
+        "user_selections": sel,
+        "boxes": boxes_preview,
+        "label_cells": session.label_cells or {},
+    }
+    if not ok and attempts >= 2:
+        payload["downshift"] = True
+    return payload
