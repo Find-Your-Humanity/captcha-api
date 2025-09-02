@@ -844,6 +844,35 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         response["redirect_url"] = SUCCESS_REDIRECT_URL
     return response
 
+
+@app.post("/api/handwriting-challenge")
+def create_handwriting_challenge() -> Dict[str, Any]:
+    """새로운 손글씨 캡차 샘플 이미지 URL들을 반환한다.
+
+    서버가 보유한 매니페스트에서 무작위 클래스를 선택하고, 그 클래스의 이미지 키들 중 최대 5개를 뽑아
+    CDN 절대 URL로 변환하여 내려준다. 클라이언트 캐시 무효화를 위해 간단한 쿼리 파라미터를 덧붙인다.
+    """
+    try:
+        _select_handwriting_challenge()
+        keys = list(HANDWRITING_CURRENT_IMAGES or [])
+        urls: List[str] = []
+        now_ms = int(time.time() * 1000)
+        for k in keys[:5]:
+            u = _build_cdn_url(str(k), is_remote=True)
+            if u:
+                # 간단한 캐시 버스터 추가
+                urls.append(f"{u}?ts={now_ms}")
+        return {
+            "samples": urls,
+            "ttl": 60,
+        }
+    except Exception as e:
+        try:
+            print(f"⚠️ handwriting-challenge failed: {e}")
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="Failed to create handwriting challenge")
+
 # ================= Abstract Captcha API =================
 
 @app.post("/api/abstract-captcha")
