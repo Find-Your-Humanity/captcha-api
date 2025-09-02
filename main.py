@@ -270,10 +270,6 @@ def _load_class_dir_map(path: str) -> Dict[str, List[str]]:
         print(f"⚠️ failed to load ABSTRACT_CLASS_DIR_MAP: {e}")
         return {}
 
-
-# Postgres 로더 제거: Mongo만 사용
-
-
 def _sample_images_from_dirs(dirs: List[str], desired_count: int) -> List[str]:
     paths: List[str] = []
     for d in dirs:
@@ -359,8 +355,6 @@ def _verify_image_token(challenge_id: str, image_index: int, signature: str) -> 
         return False
 
 
-# handwriting 매니페스트는 아래 Mongo 설정 이후에 로드합니다.
-
 # 단어 리스트 로드 로그
 ABSTRACT_CLASS_LIST = _load_word_list(WORD_LIST_PATH)
 try:
@@ -375,6 +369,8 @@ MONGO_DB = os.getenv("MONGO_DB", "")
 MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "")
 MONGO_DOC_ID = os.getenv("MONGO_DOC_ID", "abstract_class_dir_map")
 MONGO_MANIFEST_COLLECTION = os.getenv("MONGO_MANIFEST_COLLECTION", os.getenv("MONGO_COLLECTION", ""))
+# ImageCaptcha용 기본 매니페스트 컬렉션 (한 장 이미지 키 목록)
+BASIC_MANIFEST_COLLECTION = os.getenv("BASIC_MANIFEST_COLLECTION", "basic_manifest")
 
 # ===== Behavior Data Mongo Settings =====
 # 운영에서 행동 데이터 저장을 제어하는 스위치와 대상 컬렉션 설정
@@ -583,6 +579,49 @@ def _load_file_keys_manifest_from_mongo(uri: str, db: str, col: str) -> Dict[str
         print(f"⚠️ failed to load abstract manifest from Mongo: {e}")
         return {}
 
+
+def _load_basic_manifest_from_mongo(uri: str, db: str, col: str) -> List[str]:
+    """basic_manifest 컬렉션에서 파일 키들의 평탄화된 리스트를 로드한다."""
+    try:
+        if not (uri and db and col):
+            return []
+        try:
+            from pymongo import MongoClient  # type: ignore
+        except Exception as e:
+            print(f"⚠️ pymongo not available for basic manifest: {e}")
+            return []
+        client = MongoClient(uri, serverSelectionTimeoutMS=3000)
+        try:
+            c = client[db][col]
+            keys: List[str] = []
+            try:
+                for d in c.find({}, {"keys": 1, "key": 1}):
+                    if isinstance(d.get("keys"), list):
+                        for k in d.get("keys"):
+                            if isinstance(k, str) and k.strip():
+                                keys.append(k.strip())
+                    else:
+                        k = d.get("key")
+                        if isinstance(k, str) and k.strip():
+                            keys.append(k.strip())
+            except Exception:
+                pass
+            if keys:
+                return list(dict.fromkeys(keys))
+            doc = c.find_one({}, {"keys": 1})
+            if doc and isinstance(doc.get("keys"), list):
+                cleaned = [str(x).strip() for x in doc.get("keys") if isinstance(x, str) and str(x).strip()]
+                return list(dict.fromkeys(cleaned))
+            return []
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"⚠️ failed to load basic manifest from Mongo: {e}")
+        return []
+
 _mongo_map = _load_class_dir_map_from_mongo(MONGO_URI, MONGO_DB, MONGO_COLLECTION, MONGO_DOC_ID)
 ABSTRACT_CLASS_DIR_MAPPING = _mongo_map if _mongo_map else _load_class_dir_map(ABSTRACT_CLASS_DIR_MAP)
 ABSTRACT_KEYWORDS_BY_CLASS = _load_keyword_map(ABSTRACT_KEYWORD_MAP)
@@ -609,6 +648,13 @@ except Exception:
 ABSTRACT_FILE_KEYS_BY_CLASS = _load_file_keys_manifest_from_mongo(MONGO_URI, MONGO_DB, MONGO_MANIFEST_COLLECTION)
 try:
     print(f"🗃️ Abstract file-key manifest: {len(ABSTRACT_FILE_KEYS_BY_CLASS)} classes")
+except Exception:
+    pass
+
+# ImageCaptcha용: 기본 이미지 키 목록 로드
+BASIC_IMAGE_KEYS: List[str] = _load_basic_manifest_from_mongo(MONGO_URI, MONGO_DB, BASIC_MANIFEST_COLLECTION)
+try:
+    print(f"🧱 Basic manifest keys: {len(BASIC_IMAGE_KEYS)} from collection '{BASIC_MANIFEST_COLLECTION}'")
 except Exception:
     pass
 
@@ -691,9 +737,9 @@ def next_captcha(request: CaptchaRequest):
         is_bot = False
         ML_SERVICE_USED = False
 
-    # 신뢰도와 무관하게 Handwriting 캡차로 고정
-    captcha_type = "handwriting"
-    next_captcha = "handwritingcaptcha"
+    # 신뢰도와 무관하게 Image 캡차로 고정
+    captcha_type = "image"
+    next_captcha = "imagecaptcha"
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
@@ -705,19 +751,7 @@ def next_captcha(request: CaptchaRequest):
         "is_bot_detected": is_bot if ML_SERVICE_USED else None
     }
 
-    # handwriting 단계 진입 시 CDN URL로 샘플 이미지 전달
-    if next_captcha == "handwritingcaptcha":
-        try:
-            _select_handwriting_challenge()
-            keys = list(HANDWRITING_CURRENT_IMAGES or [])
-            urls: List[str] = []
-            for k in keys[:5]:
-                u = _build_cdn_url(str(k), is_remote=True)
-                if u:
-                    urls.append(u)
-            payload["handwriting_samples"] = urls
-        except Exception:
-            payload["handwriting_samples"] = []
+    # handwriting 단계 특화 페이로드는 비활성화
 
     try:
         preview = {
@@ -1145,3 +1179,23 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
         payload["downshift"] = True
     # removed verbose payload preview log for abstract-verify
     return payload
+
+
+# ================= Image Captcha API (single image for 3x3 grid) =================
+
+@app.post("/api/imagecaptcha-challenge")
+def create_imagecaptcha_challenge() -> Dict[str, Any]:
+    """Mongo basic_manifest에서 임의의 키를 선택하여 CDN URL을 반환한다.
+    프론트는 이 URL 하나를 받아 3x3 그리드의 배경으로 사용한다.
+    """
+    if not BASIC_IMAGE_KEYS:
+        raise HTTPException(status_code=500, detail="Basic manifest is empty. Configure BASIC_MANIFEST_COLLECTION.")
+    picked = random.choice(BASIC_IMAGE_KEYS)
+    url = _build_cdn_url(str(picked), is_remote=True)
+    if not url:
+        raise HTTPException(status_code=500, detail="ASSET_BASE_URL not configured or key mapping failed")
+    ts = int(time.time() * 1000)
+    return {
+        "url": f"{url}?ts={ts}",
+        "ttl": 60,
+    }
