@@ -1190,9 +1190,10 @@ class ImageGridCaptchaSession:
     correct_cells: List[int] = None
     ttl_seconds: int
     created_at: float
-    attempts: int = 0
     boxes: List[Dict[str, Any]] = None  # [{x1,y1,x2,y2,conf,class_id,class_name}]
     label_cells: Dict[str, List[int]] = None  # {label: [cells]}
+    attempts: int = 0
+    
 
 
 IMAGE_GRID_SESSIONS: Dict[str, ImageGridCaptchaSession] = {}
