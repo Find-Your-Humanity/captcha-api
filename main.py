@@ -1067,7 +1067,7 @@ def create_abstract_captcha() -> Dict[str, Any]:
 
     # 세션 저장
     challenge_id = uuid.uuid4().hex
-    ttl_seconds = random.randint(50, 60)
+    ttl_seconds = 60
     session = AbstractCaptchaSession(
         challenge_id=challenge_id,
         target_class=target_class,
@@ -1186,10 +1186,10 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
 class ImageGridCaptchaSession:
     challenge_id: str
     image_url: str
-    target_label: str = ""
-    correct_cells: List[int] = None
     ttl_seconds: int
     created_at: float
+    target_label: str = ""
+    correct_cells: List[int] = None
     boxes: List[Dict[str, Any]] = None  # [{x1,y1,x2,y2,conf,class_id,class_name}]
     label_cells: Dict[str, List[int]] = None  # {label: [cells]}
     attempts: int = 0
