@@ -1186,8 +1186,8 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
 class ImageGridCaptchaSession:
     challenge_id: str
     image_url: str
-    target_label: str
-    correct_cells: List[int]
+    target_label: str = ""
+    correct_cells: List[int] = None
     ttl_seconds: int
     created_at: float
     attempts: int = 0
@@ -1245,56 +1245,25 @@ def create_image_grid_captcha() -> Dict[str, Any]:
     if not url:
         raise HTTPException(status_code=500, detail="ASSET_BASE_URL misconfigured")
 
-    try:
-        resp = httpx.post(PREDICT_IMAGE_URL, json={"image_url": url}, timeout=25.0)
-        resp.raise_for_status()
-        pred = resp.json()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"ML predict failed: {e}")
-
-    width = int(pred.get("width") or 0)
-    height = int(pred.get("height") or 0)
-    boxes = pred.get("boxes") or []
-    if width <= 0 or height <= 0:
-        raise HTTPException(status_code=500, detail="Invalid ML output (size)")
-
-    top = None
-    for b in boxes:
-        if top is None or float(b.get("conf", 0.0)) > float(top.get("conf", 0.0)):
-            top = b
-    if not top:
-        raise HTTPException(status_code=503, detail="No objects detected; retry")
-    target_label = str(top.get("class_name") or "").strip()
-    if not target_label:
-        raise HTTPException(status_code=500, detail="Missing class_name from ML")
-
-    label_cells = _cells_from_boxes(width, height, boxes)
-    correct_cells = label_cells.get(target_label, [])
-    if not correct_cells:
-        raise HTTPException(status_code=503, detail="No cells mapped; retry")
-
     challenge_id = uuid.uuid4().hex
     session = ImageGridCaptchaSession(
         challenge_id=challenge_id,
         image_url=url,
-        target_label=target_label,
-        correct_cells=correct_cells,
+        target_label="",
+        correct_cells=[],
         ttl_seconds=60,
         created_at=time.time(),
-        boxes=boxes,
-        label_cells=label_cells,
+        boxes=None,
+        label_cells=None,
     )
     with IMAGE_GRID_LOCK:
         IMAGE_GRID_SESSIONS[challenge_id] = session
-
-    question = f"Select all images with a {target_label}."
     return {
         "challenge_id": challenge_id,
         "url": url,
         "ttl": session.ttl_seconds,
         "grid_size": 3,
-        "target_label": target_label,
-        "question": question,
+        "question": "Select all matching images.",
     }
 
 
@@ -1315,11 +1284,39 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
         return {"success": False, "message": "Challenge expired"}
 
     sel = sorted(set(int(x) for x in (req.selections or [])))
-    correct = sorted(set(session.correct_cells))
+
+    # 세션의 image_url 기반으로 YOLO 추론 실행
+    try:
+        resp = httpx.post(PREDICT_IMAGE_URL, json={"image_url": session.image_url}, timeout=25.0)
+        resp.raise_for_status()
+        pred = resp.json()
+    except Exception as e:
+        return {"success": False, "message": f"ML predict failed: {e}"}
+
+    width = int(pred.get("width") or 0)
+    height = int(pred.get("height") or 0)
+    boxes = pred.get("boxes") or []
+    if width <= 0 or height <= 0:
+        return {"success": False, "message": "Invalid ML output (size)"}
+
+    # 최상위 라벨 선택 후 동일 라벨 박스 셀 통합
+    top = None
+    for b in boxes:
+        if top is None or float(b.get("conf", 0.0)) > float(top.get("conf", 0.0)):
+            top = b
+    if not top:
+        return {"success": False, "message": "No objects detected"}
+    target_label = str(top.get("class_name") or "").strip()
+    label_cells = _cells_from_boxes(width, height, boxes)
+    correct = sorted(set(label_cells.get(target_label, []) or []))
     ok = sel == correct
 
     with IMAGE_GRID_LOCK:
         session.attempts += 1
+        session.target_label = target_label
+        session.correct_cells = correct
+        session.boxes = boxes
+        session.label_cells = label_cells
         attempts = session.attempts
         if ok or attempts >= 2:
             IMAGE_GRID_SESSIONS.pop(req.challenge_id, None)
@@ -1328,7 +1325,7 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
     try:
         boxes_preview = [
             {"class_name": str(b.get("class_name")), "conf": float(b.get("conf", 0.0))}
-            for b in (session.boxes or [])
+            for b in (boxes or [])
         ]
     except Exception:
         boxes_preview = []
@@ -1336,11 +1333,11 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
     try:
         boxes_preview_log = [
             {"class": str(b.get("class_name")), "conf": round(float(b.get("conf", 0.0)), 3)}
-            for b in (session.boxes or [])
+            for b in (boxes or [])
         ]
         print(
-            f"🔎 [/api/imagecaptcha-verify] target={session.target_label} success={ok} attempts={attempts} "
-            f"correct={correct} selections={sel} boxes={boxes_preview_log} label_cells={session.label_cells or {}}"
+            f"🔎 [/api/imagecaptcha-verify] target={target_label} success={ok} attempts={attempts} "
+            f"correct={correct} selections={sel} boxes={boxes_preview_log} label_cells={label_cells or {}}"
         )
     except Exception:
         pass
@@ -1348,11 +1345,11 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
     payload = {
         "success": ok,
         "attempts": attempts,
-        "target_label": session.target_label,
+        "target_label": target_label,
         "correct_cells": correct,
         "user_selections": sel,
         "boxes": boxes_preview,
-        "label_cells": session.label_cells or {},
+        "label_cells": label_cells or {},
     }
     if not ok and attempts >= 2:
         payload["downshift"] = True
