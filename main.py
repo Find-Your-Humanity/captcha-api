@@ -919,7 +919,6 @@ def next_captcha(request: CaptchaRequest):
 @app.post("/api/handwriting-verify")
 def verify_handwriting(request: HandwritingVerifyRequest):
     start_time = time.time()
-    start_time = time.time()
     # Redis 경로: challenge_id 기반으로 target_class 로드
     redis_doc = None
     redis_key = None
@@ -1004,7 +1003,7 @@ def verify_handwriting(request: HandwritingVerifyRequest):
 
     if not target_answer_class:
     # 세션 기반 정답 소스 선택
-    target_answer_class = None
+        target_answer_class = None
     if redis_doc:
         target_answer_class = str((redis_doc or {}).get("target_class") or "")
     if not target_answer_class:
@@ -1088,6 +1087,7 @@ def verify_handwriting(request: HandwritingVerifyRequest):
             print(f"⚠️ OCR response missing text. keys={list(ocr_json.keys()) if isinstance(ocr_json, dict) else 'n/a'}")
         except Exception:
             pass
+        
         # 응답 시간 계산 및 로깅
         response_time = int((time.time() - start_time) * 1000)
         log_request(
