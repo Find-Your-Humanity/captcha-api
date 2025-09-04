@@ -22,6 +22,7 @@ import mimetypes
 import threading
 from typing import Optional as _OptionalType
 from dataclasses import dataclass
+from database import log_request, test_connection
 try:
     RESAMPLE_LANCZOS = Image.Resampling.LANCZOS  # Pillow >= 9.1
 except Exception:
@@ -771,6 +772,9 @@ def next_captcha(request: CaptchaRequest):
 
 @app.post("/api/handwriting-verify")
 def verify_handwriting(request: HandwritingVerifyRequest):
+    # 요청 시작 시간 기록
+    start_time = time.time()
+    
     # data:image/png;base64,.... 형태 처리
     base64_str = request.image_base64 or ""
     if base64_str.startswith("data:image"):
@@ -783,6 +787,14 @@ def verify_handwriting(request: HandwritingVerifyRequest):
             print(f"⚠️ base64 decode failed: {e}")
         except Exception:
             pass
+        # 응답 시간 계산 및 로깅
+        response_time = int((time.time() - start_time) * 1000)
+        log_request(
+            path="/api/handwriting-verify",
+            method="POST",
+            status_code=400,
+            response_time=response_time
+        )
         return {"success": False, "message": f"Invalid base64 image: {e}"}
 
     # 전처리 제거: 원본 이미지를 그대로 사용
@@ -807,6 +819,14 @@ def verify_handwriting(request: HandwritingVerifyRequest):
             print("⚠️ verify-handwriting aborted after save: OCR_API_URL not configured")
         except Exception:
             pass
+        # 응답 시간 계산 및 로깅
+        response_time = int((time.time() - start_time) * 1000)
+        log_request(
+            path="/api/handwriting-verify",
+            method="POST",
+            status_code=500,
+            response_time=response_time
+        )
         return {"success": False, "message": "OCR_API_URL is not configured on server."}
 
     if not HANDWRITING_CURRENT_CLASS:
@@ -814,6 +834,14 @@ def verify_handwriting(request: HandwritingVerifyRequest):
             print("⚠️ verify-handwriting aborted after save: HANDWRITING_CURRENT_CLASS is None (manifest missing or empty)")
         except Exception:
             pass
+        # 응답 시간 계산 및 로깅
+        response_time = int((time.time() - start_time) * 1000)
+        log_request(
+            path="/api/handwriting-verify",
+            method="POST",
+            status_code=500,
+            response_time=response_time
+        )
         return {"success": False, "message": "No handwriting challenge is prepared."}
 
     def _call_ocr_multipart():
@@ -833,10 +861,26 @@ def verify_handwriting(request: HandwritingVerifyRequest):
             if len(body_preview) > 500:
                 body_preview = body_preview[:500] + "... (truncated)"
             print(f"❌ OCR API multipart failed: status={e.response.status_code}, body={body_preview}")
+            # 응답 시간 계산 및 로깅
+            response_time = int((time.time() - start_time) * 1000)
+            log_request(
+                path="/api/handwriting-verify",
+                method="POST",
+                status_code=500,
+                response_time=response_time
+            )
             return {"success": False, "message": f"OCR API request failed: {e}"}
         ocr_json = resp.json()
     except Exception as e:
         print(f"❌ OCR API request failed: {e}")
+        # 응답 시간 계산 및 로깅
+        response_time = int((time.time() - start_time) * 1000)
+        log_request(
+            path="/api/handwriting-verify",
+            method="POST",
+            status_code=500,
+            response_time=response_time
+        )
         return {"success": False, "message": f"OCR API request failed: {e}"}
 
     # 로그에 과도한 출력 방지: 앞부분만 표시
@@ -858,6 +902,14 @@ def verify_handwriting(request: HandwritingVerifyRequest):
             print(f"⚠️ OCR response missing text. keys={list(ocr_json.keys()) if isinstance(ocr_json, dict) else 'n/a'}")
         except Exception:
             pass
+        # 응답 시간 계산 및 로깅
+        response_time = int((time.time() - start_time) * 1000)
+        log_request(
+            path="/api/handwriting-verify",
+            method="POST",
+            status_code=500,
+            response_time=response_time
+        )
         return {"success": False, "message": "OCR API response missing text field"}
 
     # 디버그 로그: OCR에서 받은 원본 텍스트 출력
@@ -877,6 +929,15 @@ def verify_handwriting(request: HandwritingVerifyRequest):
     response: Dict[str, Any] = {"success": is_match}
     if is_match and SUCCESS_REDIRECT_URL:
         response["redirect_url"] = SUCCESS_REDIRECT_URL
+    
+    # 응답 시간 계산 및 로깅
+    response_time = int((time.time() - start_time) * 1000)
+    log_request(
+        path="/api/handwriting-verify",
+        method="POST",
+        status_code=200,
+        response_time=response_time
+    )
     return response
 
 @app.post("/api/handwriting-challenge")
@@ -1115,9 +1176,20 @@ def create_abstract_captcha() -> Dict[str, Any]:
 
 @app.post("/api/abstract-verify")
 def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
+    # 요청 시작 시간 기록
+    start_time = time.time()
+    
     with ABSTRACT_SESSIONS_LOCK:
         session = ABSTRACT_SESSIONS.get(req.challenge_id)
     if not session:
+        # 응답 시간 계산 및 로깅
+        response_time = int((time.time() - start_time) * 1000)
+        log_request(
+            path="/api/abstract-verify",
+            method="POST",
+            status_code=404,
+            response_time=response_time
+        )
         return {"success": False, "message": "Challenge not found"}
     if session.is_expired():
         # 만료된 세션은 제거
@@ -1179,6 +1251,15 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
         payload["message"] = "Too many attempts; please try an easier challenge."
         payload["downshift"] = True
     # removed verbose payload preview log for abstract-verify
+    
+    # 응답 시간 계산 및 로깅
+    response_time = int((time.time() - start_time) * 1000)
+    log_request(
+        path="/api/abstract-verify",
+        method="POST",
+        status_code=200,
+        response_time=response_time
+    )
     return payload
 
 
@@ -1305,6 +1386,9 @@ class ImageGridVerifyRequest(BaseModel):
 
 @app.post("/api/imagecaptcha-verify")
 def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
+    # 요청 시작 시간 기록
+    start_time = time.time()
+    
     with IMAGE_GRID_LOCK:
         session = IMAGE_GRID_SESSIONS.get(req.challenge_id)
     if not session:
@@ -1356,4 +1440,13 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
     }
     if not ok and attempts >= 2:
         payload["downshift"] = True
+    
+    # 응답 시간 계산 및 로깅
+    response_time = int((time.time() - start_time) * 1000)
+    log_request(
+        path="/api/imagecaptcha-verify",
+        method="POST",
+        status_code=200,
+        response_time=response_time
+    )
     return payload
