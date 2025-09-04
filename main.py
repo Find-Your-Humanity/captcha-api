@@ -144,6 +144,117 @@ def redis_incr_attempts(key: str, field: str = "attempts", ttl: int | None = Non
     except Exception:
         return -1
 
+# ===== Redis MemStore =====
+import json as _json
+try:
+    import redis  # type: ignore
+except Exception:
+    redis = None  # optional import; guarded by USE_REDIS flag
+
+USE_REDIS = os.getenv("USE_REDIS", "false").lower() == "true"
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+REDIS_SSL = os.getenv("REDIS_SSL", "false").lower() == "true"
+REDIS_PREFIX = os.getenv("REDIS_PREFIX", "rcaptcha:")
+REDIS_TIMEOUT_MS = int(os.getenv("REDIS_TIMEOUT_MS", "2000"))
+
+_redis_client = None
+
+def get_redis():
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+    if not USE_REDIS:
+        return None
+    if redis is None:
+        try:
+            print("⚠️ redis package not available; set USE_REDIS=false or install redis~=5.0")
+        except Exception:
+            pass
+        return None
+    try:
+        _redis_client = redis.Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            db=REDIS_DB,
+            password=REDIS_PASSWORD,
+            ssl=REDIS_SSL,
+            socket_connect_timeout=REDIS_TIMEOUT_MS / 1000.0,
+            socket_timeout=REDIS_TIMEOUT_MS / 1000.0,
+            decode_responses=True,
+        )
+        _redis_client.ping()
+        return _redis_client
+    except Exception as e:
+        try:
+            print(f"⚠️ Redis connect failed: {e}")
+        except Exception:
+            pass
+        _redis_client = None
+        return None
+
+def rkey(*parts: str) -> str:
+    return REDIS_PREFIX + ":".join([p.strip(":") for p in parts if p])
+
+def redis_set_json(key: str, value: dict, ttl: int):
+    r = get_redis()
+    if not r:
+        return False
+    data = _json.dumps(value, ensure_ascii=False)
+    try:
+        return r.setex(key, ttl, data)
+    except Exception:
+        return False
+
+def redis_get_json(key: str):
+    r = get_redis()
+    if not r:
+        return None
+    try:
+        data = r.get(key)
+    except Exception:
+        data = None
+    if not data:
+        return None
+    try:
+        return _json.loads(data)
+    except Exception:
+        return None
+
+def redis_del(key: str):
+    r = get_redis()
+    if not r:
+        return 0
+    try:
+        return r.delete(key)
+    except Exception:
+        return 0
+
+def redis_incr_attempts(key: str, field: str = "attempts", ttl: int | None = None) -> int:
+    r = get_redis()
+    if not r:
+        return -1
+    try:
+        val = redis_get_json(key) or {}
+        cur = int(val.get(field, 0)) + 1
+        val[field] = cur
+        if ttl is None:
+            try:
+                remain = r.ttl(key)
+                if remain and remain > 0:
+                    r.setex(key, remain, _json.dumps(val, ensure_ascii=False))
+                else:
+                    r.set(key, _json.dumps(val, ensure_ascii=False))
+            except Exception:
+                r.set(key, _json.dumps(val, ensure_ascii=False))
+        else:
+            r.setex(key, ttl, _json.dumps(val, ensure_ascii=False))
+        return cur
+    except Exception:
+        return -1
+
 # ML 서비스 베이스 URL (ex: http://localhost:8001)
 ML_SERVICE_URL = os.getenv("ML_SERVICE_URL", "http://localhost:8001")
 # 파생 URL (직접 결합)
@@ -961,6 +1072,15 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         target_answer_class = HANDWRITING_CURRENT_CLASS
 
     if not target_answer_class:
+    # 세션 기반 정답 소스 선택
+    target_answer_class = None
+    if redis_doc:
+        target_answer_class = str((redis_doc or {}).get("target_class") or "")
+    if not target_answer_class:
+        # 폴백: 기존 전역(추후 제거 예정)
+        target_answer_class = HANDWRITING_CURRENT_CLASS
+
+    if not target_answer_class:
         try:
             print("⚠️ verify-handwriting aborted after save: HANDWRITING_CURRENT_CLASS is None (manifest missing or empty)")
         except Exception:
@@ -1057,6 +1177,7 @@ def verify_handwriting(request: HandwritingVerifyRequest):
 
     extracted_norm = _normalize_text(extracted)
     answer_norm = _normalize_text(target_answer_class)
+    answer_norm = _normalize_text(target_answer_class)
     is_match = extracted_norm == answer_norm and len(answer_norm) > 0
     try:
         print(f"🧮 normalize: extracted='{extracted_norm}', answer='{answer_norm}', match={is_match}")
@@ -1064,6 +1185,11 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         pass
 
     response: Dict[str, Any] = {"success": is_match}
+    # Redis attempts 관리 및 조건부 삭제
+    if redis_doc and redis_key:
+        attempts = redis_incr_attempts(redis_key)
+        if is_match or (isinstance(attempts, int) and attempts >= 1):
+            redis_del(redis_key)
     # Redis attempts 관리 및 조건부 삭제
     if redis_doc and redis_key:
         attempts = redis_incr_attempts(redis_key)
@@ -1128,9 +1254,30 @@ async def create_handwriting_challenge(x_api_key: str = Header(None, alias="X-AP
                     print(f"⚠️ Redis write failed(handwriting): {e}")
                 except Exception:
                     pass
+        # challenge_id 발급 및 Redis 저장 시도
+        challenge_id = uuid.uuid4().hex
+        ttl_seconds = 60
+        if USE_REDIS and get_redis():
+            try:
+                doc = {
+                    "type": "handwriting",
+                    "cid": challenge_id,
+                    "samples": urls,
+                    "target_class": HANDWRITING_CURRENT_CLASS,
+                    "attempts": 0,
+                    "created_at": time.time(),
+                }
+                redis_set_json(rkey("handwriting", challenge_id), doc, ttl_seconds)
+            except Exception as e:
+                try:
+                    print(f"⚠️ Redis write failed(handwriting): {e}")
+                except Exception:
+                    pass
         response = {
             "challenge_id": challenge_id,
+            "challenge_id": challenge_id,
             "samples": urls,
+            "ttl": ttl_seconds,
             "ttl": ttl_seconds,
             "message": "Handwriting challenge created successfully"
         }
@@ -1294,6 +1441,7 @@ def create_abstract_captcha() -> Dict[str, Any]:
         final_paths = [candidate_paths[i] for i in selected_indices]
 
     # 세션 구성 및 응답용 이미지 URL 생성 (서명 포함)
+    # 세션 구성 및 응답용 이미지 URL 생성 (서명 포함)
     challenge_id = uuid.uuid4().hex
     ttl_seconds = 60
     session = AbstractCaptchaSession(
@@ -1314,6 +1462,36 @@ def create_abstract_captcha() -> Dict[str, Any]:
             images.append({"id": idx, "url": ""})
             continue
         images.append({"id": idx, "url": cdn_url})
+
+    # Redis에 저장 시도, 실패 시 in-memory 폴백
+    saved_in_memory_abs = False
+    if USE_REDIS and get_redis():
+        try:
+            doc = {
+                "type": "abstract",
+                "cid": challenge_id,
+                "target_class": target_class,
+                "keywords": keywords,
+                "image_urls": [img.get("url", "") for img in images],
+                "is_positive": list(is_positive_flags),
+                "attempts": 0,
+                "created_at": session.created_at,
+            }
+            ok = redis_set_json(rkey("abstract", challenge_id), doc, ttl_seconds)
+            if not ok:
+                raise RuntimeError("redis setex failed for abstract")
+        except Exception as e:
+            try:
+                print(f"⚠️ Redis write failed(abstract): {e}; fallback to memory")
+            except Exception:
+                pass
+            with ABSTRACT_SESSIONS_LOCK:
+                ABSTRACT_SESSIONS[challenge_id] = session
+            saved_in_memory_abs = True
+    else:
+        with ABSTRACT_SESSIONS_LOCK:
+            ABSTRACT_SESSIONS[challenge_id] = session
+        saved_in_memory_abs = True
 
     # Redis에 저장 시도, 실패 시 in-memory 폴백
     saved_in_memory_abs = False
@@ -1464,6 +1642,7 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
     if DEBUG_ABSTRACT_VERIFY:
         try:
             print(
+                f"🧮 [abstract-verify:M] tp={tp}, fp={fp}, fn={fn}, precision={precision:.4f}, recall={recall:.4f}, "
                 f"🧮 [abstract-verify:M] tp={tp}, fp={fp}, fn={fn}, precision={precision:.4f}, recall={recall:.4f}, "
                 f"img_score={img_score:.4f}, positives={sorted(list(positives_set))}, selections={sorted(list(selections_set))}, "
                 f"is_pass={is_pass}"
@@ -1624,6 +1803,35 @@ def create_image_challenge() -> Dict[str, Any]:
         with IMAGE_GRID_LOCK:
             IMAGE_GRID_SESSIONS[challenge_id] = session
         saved_in_memory = True
+    # 세션 저장: Redis 우선, 실패 시 in-memory 폴백
+    saved_in_memory = False
+    if USE_REDIS and get_redis():
+        try:
+            doc = {
+                "type": "imagegrid",
+                "cid": challenge_id,
+                "image_url": url,
+                "attempts": 0,
+                "created_at": session.created_at,
+                # 프리컴퓨트 고정 경로: 정답/타겟도 저장
+                "target_label": session.target_label,
+                "correct_cells": list(session.correct_cells or []),
+            }
+            ok = redis_set_json(rkey("imagegrid", challenge_id), doc, session.ttl_seconds)
+            if not ok:
+                raise RuntimeError("redis setex failed")
+        except Exception as e:
+            try:
+                print(f"⚠️ Redis write failed(imagegrid): {e}; fallback to memory")
+            except Exception:
+                pass
+            with IMAGE_GRID_LOCK:
+                IMAGE_GRID_SESSIONS[challenge_id] = session
+            saved_in_memory = True
+    else:
+        with IMAGE_GRID_LOCK:
+            IMAGE_GRID_SESSIONS[challenge_id] = session
+        saved_in_memory = True
     return {
         "challenge_id": challenge_id,
         "url": url,
@@ -1701,6 +1909,7 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
     try:
         print(
             f"🔎 [/api/imagecaptcha-verify:M] target={target_label} success={ok} attempts={attempts} "
+            f"🔎 [/api/imagecaptcha-verify:M] target={target_label} success={ok} attempts={attempts} "
             f"correct={correct} selections={sel}"
         )
     except Exception:
@@ -1713,7 +1922,9 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
         "correct_cells": correct,
         "user_selections": sel,
         "boxes": [],
+        "boxes": [],
     }
+    if not ok and attempts >= 1:
     if not ok and attempts >= 1:
         payload["downshift"] = True
     
