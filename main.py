@@ -122,7 +122,7 @@ def redis_del(key: str):
     except Exception:
         return 0
 
-def redis_incr_attempts(key: str, field: str = "attempts", ttl: int | None = None) -> int:
+def redis_incr_attempts(key: str, field: str = "attempts", ttl: Optional[int] = None) -> int:
     r = get_redis()
     if not r:
         return -1
