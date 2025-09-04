@@ -121,6 +121,73 @@ def cleanup_duplicate_logs() -> bool:
         logger.error(f"중복 로그 정리 실패: {e}")
         return False
 
+def update_daily_api_stats(api_type: str, is_success: bool, response_time: int) -> bool:
+    """일별 API 통계를 업데이트합니다."""
+    try:
+        with get_db_cursor() as cursor:
+            # API 타입 매핑
+            api_type_mapping = {
+                'handwriting': 'handwriting',
+                'abstract': 'abstract', 
+                'imagecaptcha': 'imagecaptcha'
+            }
+            
+            mapped_api_type = api_type_mapping.get(api_type, api_type)
+            
+            # 오늘 날짜의 통계 업데이트 (INSERT ... ON DUPLICATE KEY UPDATE)
+            upsert_query = """
+                INSERT INTO daily_api_stats (date, api_type, total_requests, success_requests, failed_requests, avg_response_time)
+                VALUES (CURDATE(), %s, 1, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    total_requests = total_requests + 1,
+                    success_requests = success_requests + %s,
+                    failed_requests = failed_requests + %s,
+                    avg_response_time = (avg_response_time * (total_requests - 1) + %s) / total_requests,
+                    updated_at = NOW()
+            """
+            
+            success_count = 1 if is_success else 0
+            failed_count = 0 if is_success else 1
+            
+            cursor.execute(upsert_query, (
+                mapped_api_type, success_count, failed_count, response_time,
+                success_count, failed_count, response_time
+            ))
+            
+            logger.debug(f"일별 API 통계 업데이트 완료: {mapped_api_type} - 성공: {is_success}")
+            return True
+            
+    except Exception as e:
+        logger.error(f"일별 API 통계 업데이트 실패: {e}")
+        return False
+
+def get_daily_api_stats(start_date: str, end_date: str, api_type: str = None) -> list:
+    """일별 API 통계를 조회합니다."""
+    try:
+        with get_db_cursor() as cursor:
+            base_query = """
+                SELECT date, api_type, total_requests, success_requests, failed_requests, avg_response_time
+                FROM daily_api_stats
+                WHERE date BETWEEN %s AND %s
+            """
+            params = [start_date, end_date]
+            
+            if api_type and api_type != 'all':
+                base_query += " AND api_type = %s"
+                params.append(api_type)
+            
+            base_query += " ORDER BY date ASC, api_type ASC"
+            
+            cursor.execute(base_query, params)
+            results = cursor.fetchall()
+            
+            logger.debug(f"일별 API 통계 조회 완료: {len(results)}개 레코드")
+            return results
+            
+    except Exception as e:
+        logger.error(f"일별 API 통계 조회 실패: {e}")
+        return []
+
 def test_connection() -> bool:
     """데이터베이스 연결을 테스트합니다."""
     try:

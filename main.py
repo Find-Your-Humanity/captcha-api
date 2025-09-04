@@ -22,7 +22,7 @@ import mimetypes
 import threading
 from typing import Optional as _OptionalType
 from dataclasses import dataclass
-from database import log_request, test_connection
+from database import log_request, test_connection, update_daily_api_stats
 try:
     RESAMPLE_LANCZOS = Image.Resampling.LANCZOS  # Pillow >= 9.1
 except Exception:
@@ -959,6 +959,10 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         status_code=200,
         response_time=response_time
     )
+    
+    # 일별 통계 업데이트
+    update_daily_api_stats('handwriting', is_match, response_time)
+    
     return response
 
 @app.post("/api/handwriting-challenge")
@@ -1288,6 +1292,10 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
         status_code=200,
         response_time=response_time
     )
+    
+    # 일별 통계 업데이트
+    update_daily_api_stats('abstract', is_pass, response_time)
+    
     return payload
 
 
@@ -1478,4 +1486,8 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
         status_code=200,
         response_time=response_time
     )
+    
+    # 일별 통계 업데이트
+    update_daily_api_stats('imagecaptcha', ok, response_time)
+    
     return payload
