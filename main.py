@@ -23,6 +23,7 @@ import threading
 from typing import Optional as _OptionalType
 from dataclasses import dataclass
 from database import log_request, test_connection, update_daily_api_stats, get_db_cursor
+
 try:
     RESAMPLE_LANCZOS = Image.Resampling.LANCZOS  # Pillow >= 9.1
 except Exception:
@@ -1021,6 +1022,7 @@ def next_captcha(request: CaptchaRequest):
 
 @app.post("/api/handwriting-verify")
 def verify_handwriting(request: HandwritingVerifyRequest):
+    start_time = time.time()
     # Redis 경로: challenge_id 기반으로 target_class 로드
     redis_doc = None
     redis_key = None
@@ -1093,11 +1095,6 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         # 폴백: 기존 전역(추후 제거 예정)
         target_answer_class = HANDWRITING_CURRENT_CLASS
 
-    if not target_answer_class:
-    # 세션 기반 정답 소스 선택
-    target_answer_class = None
-    if redis_doc:
-        target_answer_class = str((redis_doc or {}).get("target_class") or "")
     if not target_answer_class:
         # 폴백: 기존 전역(추후 제거 예정)
         target_answer_class = HANDWRITING_CURRENT_CLASS
@@ -1944,9 +1941,7 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
         "correct_cells": correct,
         "user_selections": sel,
         "boxes": [],
-        "boxes": [],
     }
-    if not ok and attempts >= 1:
     if not ok and attempts >= 1:
         payload["downshift"] = True
     
