@@ -22,7 +22,7 @@ import mimetypes
 import threading
 from typing import Optional as _OptionalType
 from dataclasses import dataclass
-from database import log_request, test_connection, update_daily_api_stats
+from database import log_request, test_connection, update_daily_api_stats, get_db_cursor
 try:
     RESAMPLE_LANCZOS = Image.Resampling.LANCZOS  # Pillow >= 9.1
 except Exception:
@@ -293,6 +293,28 @@ PRESIGN_TTL_SECONDS = int(os.getenv("PRESIGN_TTL_SECONDS", "120"))
 OBJECT_LIST_MAX_KEYS = int(os.getenv("OBJECT_LIST_MAX_KEYS", "300"))
 
 app = FastAPI()
+
+# --- API Key validation helper ---
+from typing import Optional as _Opt
+def validate_api_key(api_key: str) -> _Opt[int]:
+    """Return user_id for a valid/active api_key, else None.
+    Keep it simple: look up in api_keys table. Extend with rate limit as needed.
+    """
+    try:
+        with get_db_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT user_id
+                FROM api_keys
+                WHERE api_key = %s AND (status = 'active' OR status IS NULL)
+                LIMIT 1
+                """,
+                (api_key,)
+            )
+            row = cursor.fetchone()
+            return int(row.get("user_id")) if row and row.get("user_id") is not None else None
+    except Exception:
+        return None
 
 class CaptchaRequest(BaseModel):
     behavior_data: Dict[str, Any]
