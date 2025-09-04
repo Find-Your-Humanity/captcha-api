@@ -22,7 +22,8 @@ import mimetypes
 import threading
  
 from dataclasses import dataclass
-from database import log_request, test_connection, update_daily_api_stats
+from database import log_request, test_connection, update_daily_api_stats, get_db_cursor
+
 try:
     RESAMPLE_LANCZOS = Image.Resampling.LANCZOS  # Pillow >= 9.1
 except Exception:
@@ -187,6 +188,28 @@ PRESIGN_TTL_SECONDS = int(os.getenv("PRESIGN_TTL_SECONDS", "120"))
 OBJECT_LIST_MAX_KEYS = int(os.getenv("OBJECT_LIST_MAX_KEYS", "300"))
 
 app = FastAPI()
+
+# --- API Key validation helper ---
+from typing import Optional as _Opt
+def validate_api_key(api_key: str) -> _Opt[int]:
+    """Return user_id for a valid/active api_key, else None.
+    Keep it simple: look up in api_keys table. Extend with rate limit as needed.
+    """
+    try:
+        with get_db_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT user_id
+                FROM api_keys
+                WHERE api_key = %s AND (status = 'active' OR status IS NULL)
+                LIMIT 1
+                """,
+                (api_key,)
+            )
+            row = cursor.fetchone()
+            return int(row.get("user_id")) if row and row.get("user_id") is not None else None
+    except Exception:
+        return None
 
 class CaptchaRequest(BaseModel):
     behavior_data: Dict[str, Any]
@@ -896,6 +919,7 @@ def next_captcha(request: CaptchaRequest):
 @app.post("/api/handwriting-verify")
 def verify_handwriting(request: HandwritingVerifyRequest):
     start_time = time.time()
+    start_time = time.time()
     # Redis 경로: challenge_id 기반으로 target_class 로드
     redis_doc = None
     redis_key = None
@@ -975,6 +999,24 @@ def verify_handwriting(request: HandwritingVerifyRequest):
     # 세션 기반 정답 소스 선택 (세션 필수)
     target_answer_class = str((redis_doc or {}).get("target_class") or "")
     if not target_answer_class:
+        # 폴백: 기존 전역(추후 제거 예정)
+        target_answer_class = HANDWRITING_CURRENT_CLASS
+
+    if not target_answer_class:
+    # 세션 기반 정답 소스 선택
+    target_answer_class = None
+    if redis_doc:
+        target_answer_class = str((redis_doc or {}).get("target_class") or "")
+    if not target_answer_class:
+        # 폴백: 기존 전역(추후 제거 예정)
+        target_answer_class = HANDWRITING_CURRENT_CLASS
+
+    if not target_answer_class:
+        try:
+            print("⚠️ verify-handwriting aborted after save: HANDWRITING_CURRENT_CLASS is None (manifest missing or empty)")
+        except Exception:
+            pass
+        # 응답 시간 계산 및 로깅
         response_time = int((time.time() - start_time) * 1000)
         log_request(
             user_id=request.user_id,
