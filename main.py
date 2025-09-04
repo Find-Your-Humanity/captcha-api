@@ -33,6 +33,117 @@ load_dotenv(dotenv_path=Path("/app/.env"))
 load_dotenv()
 ENV = os.getenv("APP_ENV", "development")
 
+# ===== Redis MemStore =====
+import json as _json
+try:
+    import redis  # type: ignore
+except Exception:
+    redis = None  # optional import; guarded by USE_REDIS flag
+
+USE_REDIS = os.getenv("USE_REDIS", "false").lower() == "true"
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+REDIS_SSL = os.getenv("REDIS_SSL", "false").lower() == "true"
+REDIS_PREFIX = os.getenv("REDIS_PREFIX", "rcaptcha:")
+REDIS_TIMEOUT_MS = int(os.getenv("REDIS_TIMEOUT_MS", "2000"))
+
+_redis_client = None
+
+def get_redis():
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+    if not USE_REDIS:
+        return None
+    if redis is None:
+        try:
+            print("⚠️ redis package not available; set USE_REDIS=false or install redis~=5.0")
+        except Exception:
+            pass
+        return None
+    try:
+        _redis_client = redis.Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            db=REDIS_DB,
+            password=REDIS_PASSWORD,
+            ssl=REDIS_SSL,
+            socket_connect_timeout=REDIS_TIMEOUT_MS / 1000.0,
+            socket_timeout=REDIS_TIMEOUT_MS / 1000.0,
+            decode_responses=True,
+        )
+        _redis_client.ping()
+        return _redis_client
+    except Exception as e:
+        try:
+            print(f"⚠️ Redis connect failed: {e}")
+        except Exception:
+            pass
+        _redis_client = None
+        return None
+
+def rkey(*parts: str) -> str:
+    return REDIS_PREFIX + ":".join([p.strip(":") for p in parts if p])
+
+def redis_set_json(key: str, value: dict, ttl: int):
+    r = get_redis()
+    if not r:
+        return False
+    data = _json.dumps(value, ensure_ascii=False)
+    try:
+        return r.setex(key, ttl, data)
+    except Exception:
+        return False
+
+def redis_get_json(key: str):
+    r = get_redis()
+    if not r:
+        return None
+    try:
+        data = r.get(key)
+    except Exception:
+        data = None
+    if not data:
+        return None
+    try:
+        return _json.loads(data)
+    except Exception:
+        return None
+
+def redis_del(key: str):
+    r = get_redis()
+    if not r:
+        return 0
+    try:
+        return r.delete(key)
+    except Exception:
+        return 0
+
+def redis_incr_attempts(key: str, field: str = "attempts", ttl: int | None = None) -> int:
+    r = get_redis()
+    if not r:
+        return -1
+    try:
+        val = redis_get_json(key) or {}
+        cur = int(val.get(field, 0)) + 1
+        val[field] = cur
+        if ttl is None:
+            try:
+                remain = r.ttl(key)
+                if remain and remain > 0:
+                    r.setex(key, remain, _json.dumps(val, ensure_ascii=False))
+                else:
+                    r.set(key, _json.dumps(val, ensure_ascii=False))
+            except Exception:
+                r.set(key, _json.dumps(val, ensure_ascii=False))
+        else:
+            r.setex(key, ttl, _json.dumps(val, ensure_ascii=False))
+        return cur
+    except Exception:
+        return -1
+
 # ML 서비스 베이스 URL (ex: http://localhost:8001)
 ML_SERVICE_URL = os.getenv("ML_SERVICE_URL", "http://localhost:8001")
 # 파생 URL (직접 결합)
@@ -77,8 +188,6 @@ class CaptchaRequest(BaseModel):
 
 class HandwritingVerifyRequest(BaseModel):
     image_base64: str
-    user_id: Optional[int] = None
-    api_key: Optional[str] = None
     # keywords: Optional[str] = None  # 필요 시 활성화
 
 # 전역 상태: 서버 시작 시 1회 로드한 매니페스트와 선택된 챌린지
@@ -778,12 +887,6 @@ def next_captcha(request: CaptchaRequest):
 
 @app.post("/api/handwriting-verify")
 def verify_handwriting(request: HandwritingVerifyRequest):
-    # 요청 시작 시간 기록
-    start_time = time.time()
-    
-    # 디버그: 요청 데이터 로그 출력
-    print(f"🔍 [handwriting-verify] user_id: {request.user_id}, api_key: {request.api_key}")
-    
     # data:image/png;base64,.... 형태 처리
     base64_str = request.image_base64 or ""
     if base64_str.startswith("data:image"):
@@ -842,7 +945,15 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         )
         return {"success": False, "message": "OCR_API_URL is not configured on server."}
 
-    if not HANDWRITING_CURRENT_CLASS:
+    # 세션 기반 정답 소스 선택
+    target_answer_class = None
+    if redis_doc:
+        target_answer_class = str((redis_doc or {}).get("target_class") or "")
+    if not target_answer_class:
+        # 폴백: 기존 전역(추후 제거 예정)
+        target_answer_class = HANDWRITING_CURRENT_CLASS
+
+    if not target_answer_class:
         try:
             print("⚠️ verify-handwriting aborted after save: HANDWRITING_CURRENT_CLASS is None (manifest missing or empty)")
         except Exception:
@@ -938,7 +1049,7 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         pass
 
     extracted_norm = _normalize_text(extracted)
-    answer_norm = _normalize_text(HANDWRITING_CURRENT_CLASS)
+    answer_norm = _normalize_text(target_answer_class)
     is_match = extracted_norm == answer_norm and len(answer_norm) > 0
     try:
         print(f"🧮 normalize: extracted='{extracted_norm}', answer='{answer_norm}', match={is_match}")
@@ -946,6 +1057,11 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         pass
 
     response: Dict[str, Any] = {"success": is_match}
+    # Redis attempts 관리 및 조건부 삭제
+    if redis_doc and redis_key:
+        attempts = redis_incr_attempts(redis_key)
+        if is_match or (isinstance(attempts, int) and attempts >= 1):
+            redis_del(redis_key)
     if is_match and SUCCESS_REDIRECT_URL:
         response["redirect_url"] = SUCCESS_REDIRECT_URL
     
@@ -986,10 +1102,29 @@ async def create_handwriting_challenge(x_api_key: str = Header(None, alias="X-AP
             u = _build_cdn_url(str(k), is_remote=True)
             if u:
                 urls.append(u)
-        
+        # challenge_id 발급 및 Redis 저장 시도
+        challenge_id = uuid.uuid4().hex
+        ttl_seconds = 60
+        if USE_REDIS and get_redis():
+            try:
+                doc = {
+                    "type": "handwriting",
+                    "cid": challenge_id,
+                    "samples": urls,
+                    "target_class": HANDWRITING_CURRENT_CLASS,
+                    "attempts": 0,
+                    "created_at": time.time(),
+                }
+                redis_set_json(rkey("handwriting", challenge_id), doc, ttl_seconds)
+            except Exception as e:
+                try:
+                    print(f"⚠️ Redis write failed(handwriting): {e}")
+                except Exception:
+                    pass
         response = {
+            "challenge_id": challenge_id,
             "samples": urls,
-            "ttl": 60,  # 60초 TTL
+            "ttl": ttl_seconds,
             "message": "Handwriting challenge created successfully"
         }
         
@@ -1151,7 +1286,7 @@ def create_abstract_captcha() -> Dict[str, Any]:
             is_positive_flags.append(False)
         final_paths = [candidate_paths[i] for i in selected_indices]
 
-    # 세션 저장
+    # 세션 구성 및 응답용 이미지 URL 생성 (서명 포함)
     challenge_id = uuid.uuid4().hex
     ttl_seconds = 60
     session = AbstractCaptchaSession(
@@ -1164,20 +1299,44 @@ def create_abstract_captcha() -> Dict[str, Any]:
         created_at=time.time(),
         is_remote=is_remote_source,
     )
-    with ABSTRACT_SESSIONS_LOCK:
-        ABSTRACT_SESSIONS[challenge_id] = session
 
-    # 응답용 이미지 URL 생성 (서명 포함)
     images: List[Dict[str, Any]] = []
     for idx, p in enumerate(final_paths):
         cdn_url = _build_cdn_url(str(p), is_remote_source)
         if not cdn_url:
-            # CDN 모드: 매핑 실패 시에도 API 프록시를 사용하지 않음
-            # 링크 생성 실패를 명확히 하기 위해 빈 URL을 넣거나 예외로 처리할 수 있음
-            # 여기서는 빈 URL로 표기
             images.append({"id": idx, "url": ""})
             continue
         images.append({"id": idx, "url": cdn_url})
+
+    # Redis에 저장 시도, 실패 시 in-memory 폴백
+    saved_in_memory_abs = False
+    if USE_REDIS and get_redis():
+        try:
+            doc = {
+                "type": "abstract",
+                "cid": challenge_id,
+                "target_class": target_class,
+                "keywords": keywords,
+                "image_urls": [img.get("url", "") for img in images],
+                "is_positive": list(is_positive_flags),
+                "attempts": 0,
+                "created_at": session.created_at,
+            }
+            ok = redis_set_json(rkey("abstract", challenge_id), doc, ttl_seconds)
+            if not ok:
+                raise RuntimeError("redis setex failed for abstract")
+        except Exception as e:
+            try:
+                print(f"⚠️ Redis write failed(abstract): {e}; fallback to memory")
+            except Exception:
+                pass
+            with ABSTRACT_SESSIONS_LOCK:
+                ABSTRACT_SESSIONS[challenge_id] = session
+            saved_in_memory_abs = True
+    else:
+        with ABSTRACT_SESSIONS_LOCK:
+            ABSTRACT_SESSIONS[challenge_id] = session
+        saved_in_memory_abs = True
 
     # 디버그: 이미지 로드 시 정답 인덱스 및 샘플 URL 로그
     if DEBUG_ABSTRACT_VERIFY:
@@ -1201,12 +1360,6 @@ def create_abstract_captcha() -> Dict[str, Any]:
 
 @app.post("/api/abstract-verify")
 def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
-    # 요청 시작 시간 기록
-    start_time = time.time()
-    
-    # 디버그: 요청 데이터 로그 출력
-    print(f"🔍 [abstract-verify] user_id: {req.user_id}, api_key: {req.api_key}")
-    
     with ABSTRACT_SESSIONS_LOCK:
         session = ABSTRACT_SESSIONS.get(req.challenge_id)
     if not session:
@@ -1222,13 +1375,11 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
         )
         return {"success": False, "message": "Challenge not found"}
     if session.is_expired():
-        # 만료된 세션은 제거
         with ABSTRACT_SESSIONS_LOCK:
             ABSTRACT_SESSIONS.pop(req.challenge_id, None)
         return {"success": False, "message": "Challenge expired"}
 
     selections_set = set(req.selections or [])
-    # 무결성: 서명이 왔다면 모두 검사
     if req.signatures is not None:
         if len(req.signatures) != len(session.image_paths):
             return {"success": False, "message": "Invalid signatures length"}
@@ -1239,27 +1390,23 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
     tp = sum(1 for i, is_pos in enumerate(session.is_positive) if is_pos and i in selections_set)
     fp = sum(1 for i, is_pos in enumerate(session.is_positive) if (not is_pos) and i in selections_set)
     fn = sum(1 for i, is_pos in enumerate(session.is_positive) if is_pos and i not in selections_set)
-
-    # 점수: 간단한 정규화 F1 유사 스코어 (참고용, 판정에는 사용하지 않음)
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     img_score = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
-    # 정답 판정: 정답 인덱스 집합과 선택 집합이 "완전 일치"할 때만 통과
     positives_set = {i for i, is_pos in enumerate(session.is_positive) if is_pos}
     is_pass = positives_set == selections_set
 
     if DEBUG_ABSTRACT_VERIFY:
         try:
             print(
-                f"🧮 [abstract-verify] tp={tp}, fp={fp}, fn={fn}, precision={precision:.4f}, recall={recall:.4f}, "
+                f"🧮 [abstract-verify:M] tp={tp}, fp={fp}, fn={fn}, precision={precision:.4f}, recall={recall:.4f}, "
                 f"img_score={img_score:.4f}, positives={sorted(list(positives_set))}, selections={sorted(list(selections_set))}, "
                 f"is_pass={is_pass}"
             )
         except Exception:
             pass
 
-    # 시도 횟수 업데이트 및 세션 유지/삭제 결정
     with ABSTRACT_SESSIONS_LOCK:
         session.attempts += 1
         attempts = session.attempts
@@ -1281,21 +1428,6 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
         payload["message"] = "Too many attempts; please try an easier challenge."
         payload["downshift"] = True
     # removed verbose payload preview log for abstract-verify
-    
-    # 응답 시간 계산 및 로깅
-    response_time = int((time.time() - start_time) * 1000)
-    log_request(
-        user_id=req.user_id,
-        api_key=req.api_key,
-        path="/api/abstract-verify",
-        method="POST",
-        status_code=200,
-        response_time=response_time
-    )
-    
-    # 일별 통계 업데이트
-    update_daily_api_stats('abstract', is_pass, response_time)
-    
     return payload
 
 
@@ -1399,8 +1531,35 @@ def create_image_challenge() -> Dict[str, Any]:
         target_label=target_label or "",
         correct_cells=correct_cells,
     )
-    with IMAGE_GRID_LOCK:
-        IMAGE_GRID_SESSIONS[challenge_id] = session
+    # 세션 저장: Redis 우선, 실패 시 in-memory 폴백
+    saved_in_memory = False
+    if USE_REDIS and get_redis():
+        try:
+            doc = {
+                "type": "imagegrid",
+                "cid": challenge_id,
+                "image_url": url,
+                "attempts": 0,
+                "created_at": session.created_at,
+                # 프리컴퓨트 고정 경로: 정답/타겟도 저장
+                "target_label": session.target_label,
+                "correct_cells": list(session.correct_cells or []),
+            }
+            ok = redis_set_json(rkey("imagegrid", challenge_id), doc, session.ttl_seconds)
+            if not ok:
+                raise RuntimeError("redis setex failed")
+        except Exception as e:
+            try:
+                print(f"⚠️ Redis write failed(imagegrid): {e}; fallback to memory")
+            except Exception:
+                pass
+            with IMAGE_GRID_LOCK:
+                IMAGE_GRID_SESSIONS[challenge_id] = session
+            saved_in_memory = True
+    else:
+        with IMAGE_GRID_LOCK:
+            IMAGE_GRID_SESSIONS[challenge_id] = session
+        saved_in_memory = True
     return {
         "challenge_id": challenge_id,
         "url": url,
@@ -1420,12 +1579,6 @@ class ImageGridVerifyRequest(BaseModel):
 
 @app.post("/api/imagecaptcha-verify")
 def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
-    # 요청 시작 시간 기록
-    start_time = time.time()
-    
-    # 디버그: 요청 데이터 로그 출력
-    print(f"🔍 [imagecaptcha-verify] user_id: {req.user_id}, api_key: {req.api_key}")
-    
     with IMAGE_GRID_LOCK:
         session = IMAGE_GRID_SESSIONS.get(req.challenge_id)
     if not session:
@@ -1437,29 +1590,19 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
 
     sel = sorted(set(int(x) for x in (req.selections or [])))
 
-    # 세션 저장 정답으로 판정(사전 계산된 basic_label 사용)
     target_label = session.target_label
     correct = sorted(set(session.correct_cells or []))
     ok = sel == correct
 
     with IMAGE_GRID_LOCK:
         session.attempts += 1
-        session.target_label = target_label
-        session.correct_cells = correct
-        # precomputed 경로: boxes/label_cells 비저장
         attempts = session.attempts
         if ok or attempts >= 2:
             IMAGE_GRID_SESSIONS.pop(req.challenge_id, None)
 
-    # 디버그 정보 구성
-    try:
-        boxes_preview = []  # precomputed 경로에선 박스 미포함
-    except Exception:
-        boxes_preview = []
-    # 파드 로그용 디버깅 출력
     try:
         print(
-            f"🔎 [/api/imagecaptcha-verify] target={target_label} success={ok} attempts={attempts} "
+            f"🔎 [/api/imagecaptcha-verify:M] target={target_label} success={ok} attempts={attempts} "
             f"correct={correct} selections={sel}"
         )
     except Exception:
@@ -1471,9 +1614,9 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
         "target_label": target_label,
         "correct_cells": correct,
         "user_selections": sel,
-        "boxes": boxes_preview,
+        "boxes": [],
     }
-    if not ok and attempts >= 2:
+    if not ok and attempts >= 1:
         payload["downshift"] = True
     
     # 응답 시간 계산 및 로깅
