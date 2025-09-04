@@ -374,6 +374,8 @@ MONGO_DOC_ID = os.getenv("MONGO_DOC_ID", "abstract_class_dir_map")
 MONGO_MANIFEST_COLLECTION = os.getenv("MONGO_MANIFEST_COLLECTION", os.getenv("MONGO_COLLECTION", ""))
 # ImageCaptcha용 기본 매니페스트 컬렉션 (한 장 이미지 키 목록)
 BASIC_MANIFEST_COLLECTION = os.getenv("BASIC_MANIFEST_COLLECTION", "basic_manifest")
+# Precomputed labels/answers collection
+BASIC_LABEL_COLLECTION = os.getenv("BASIC_LABEL_COLLECTION", "basic_label")
 
 # ===== Behavior Data Mongo Settings =====
 # 운영에서 행동 데이터 저장을 제어하는 스위치와 대상 컬렉션 설정
@@ -1237,25 +1239,50 @@ def _cells_from_boxes(width: int, height: int, boxes: List[Dict[str, Any]]) -> D
     return {k: sorted(list(v)) for k, v in label_to_cells.items()}
 
 
-@app.post("/api/imagecaptcha-challenge")
-def create_image_grid_captcha() -> Dict[str, Any]:
-    if not BASIC_IMAGE_KEYS:
-        raise HTTPException(status_code=500, detail="Basic manifest is empty")
-    key = random.choice(BASIC_IMAGE_KEYS)
-    url = _build_cdn_url(key, is_remote=True)
+@app.post("/api/image-challenge")
+def create_image_challenge() -> Dict[str, Any]:
+    # Mongo에서 Precomputed 문서 임의 선택
+    key: Optional[str] = None
+    url: Optional[str] = None
+    target_label: Optional[str] = None
+    correct_cells: List[int] = []
+    try:
+        from pymongo import MongoClient  # type: ignore
+        uri = os.getenv("MONGO_URI", os.getenv("MONGO_URL", ""))
+        dbn = os.getenv("MONGO_DB", "")
+        if not (uri and dbn and BASIC_LABEL_COLLECTION):
+            raise HTTPException(status_code=500, detail="Mongo configuration missing for basic_label")
+        client = MongoClient(uri, serverSelectionTimeoutMS=3000)
+        coll = client[dbn][BASIC_LABEL_COLLECTION]
+        # 임의 1건 샘플링
+        doc = coll.aggregate([{"$sample": {"size": 1}}]).next()
+        key = str(doc.get("key", ""))
+        url = str(doc.get("url", ""))
+        target_label = str(doc.get("target_label", ""))
+        correct_cells = list(doc.get("correct_cells", []) or [])
+    except StopIteration:
+        raise HTTPException(status_code=500, detail="No precomputed labels found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"basic_label query failed: {e}")
+
     if not url:
-        raise HTTPException(status_code=500, detail="ASSET_BASE_URL misconfigured")
+        # Fallback: ASSET_BASE_URL + key 조합
+        if key:
+            url = _build_cdn_url(key, is_remote=True) or ""
+    if not url:
+        raise HTTPException(status_code=500, detail="Unable to build image url")
 
     challenge_id = uuid.uuid4().hex
+    question = f"{target_label} 이미지를 모두 고르시오" if target_label else "Select all matching images."
     session = ImageGridCaptchaSession(
         challenge_id=challenge_id,
         image_url=url,
-        target_label="",
-        correct_cells=[],
         ttl_seconds=60,
         created_at=time.time(),
-        boxes=None,
-        label_cells=None,
+        target_label=target_label or "",
+        correct_cells=correct_cells,
     )
     with IMAGE_GRID_LOCK:
         IMAGE_GRID_SESSIONS[challenge_id] = session
@@ -1264,7 +1291,8 @@ def create_image_grid_captcha() -> Dict[str, Any]:
         "url": url,
         "ttl": session.ttl_seconds,
         "grid_size": 3,
-        "question": "Select all matching images.",
+        "target_label": target_label,
+        "question": question,
     }
 
 
@@ -1286,59 +1314,30 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
 
     sel = sorted(set(int(x) for x in (req.selections or [])))
 
-    # 세션의 image_url 기반으로 YOLO 추론 실행
-    try:
-        resp = httpx.post(PREDICT_IMAGE_URL, json={"image_url": session.image_url}, timeout=25.0)
-        resp.raise_for_status()
-        pred = resp.json()
-    except Exception as e:
-        return {"success": False, "message": f"ML predict failed: {e}"}
-
-    width = int(pred.get("width") or 0)
-    height = int(pred.get("height") or 0)
-    boxes = pred.get("boxes") or []
-    if width <= 0 or height <= 0:
-        return {"success": False, "message": "Invalid ML output (size)"}
-
-    # 최상위 라벨 선택 후 동일 라벨 박스 셀 통합
-    top = None
-    for b in boxes:
-        if top is None or float(b.get("conf", 0.0)) > float(top.get("conf", 0.0)):
-            top = b
-    if not top:
-        return {"success": False, "message": "No objects detected"}
-    target_label = str(top.get("class_name") or "").strip()
-    label_cells = _cells_from_boxes(width, height, boxes)
-    correct = sorted(set(label_cells.get(target_label, []) or []))
+    # 세션 저장 정답으로 판정(사전 계산된 basic_label 사용)
+    target_label = session.target_label
+    correct = sorted(set(session.correct_cells or []))
     ok = sel == correct
 
     with IMAGE_GRID_LOCK:
         session.attempts += 1
         session.target_label = target_label
         session.correct_cells = correct
-        session.boxes = boxes
-        session.label_cells = label_cells
+        # precomputed 경로: boxes/label_cells 비저장
         attempts = session.attempts
         if ok or attempts >= 2:
             IMAGE_GRID_SESSIONS.pop(req.challenge_id, None)
 
     # 디버그 정보 구성
     try:
-        boxes_preview = [
-            {"class_name": str(b.get("class_name")), "conf": float(b.get("conf", 0.0))}
-            for b in (boxes or [])
-        ]
+        boxes_preview = []  # precomputed 경로에선 박스 미포함
     except Exception:
         boxes_preview = []
     # 파드 로그용 디버깅 출력
     try:
-        boxes_preview_log = [
-            {"class": str(b.get("class_name")), "conf": round(float(b.get("conf", 0.0)), 3)}
-            for b in (boxes or [])
-        ]
         print(
             f"🔎 [/api/imagecaptcha-verify] target={target_label} success={ok} attempts={attempts} "
-            f"correct={correct} selections={sel} boxes={boxes_preview_log} label_cells={label_cells or {}}"
+            f"correct={correct} selections={sel}"
         )
     except Exception:
         pass
@@ -1350,7 +1349,6 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
         "correct_cells": correct,
         "user_selections": sel,
         "boxes": boxes_preview,
-        "label_cells": label_cells or {},
     }
     if not ok and attempts >= 2:
         payload["downshift"] = True
