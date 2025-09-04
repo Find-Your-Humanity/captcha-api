@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import HTTPException
 from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, Dict, Optional, List, Tuple, Union
 from dotenv import load_dotenv
 import httpx
 import os
@@ -37,7 +37,6 @@ ENV = os.getenv("APP_ENV", "development")
 # Captcha TTL (fixed)
 CAPTCHA_TTL = 60
 
- 
 
 # ===== Redis MemStore =====
 import json as _json
@@ -127,7 +126,7 @@ def redis_del(key: str):
     except Exception:
         return 0
 
-def redis_incr_attempts(key: str, field: str = "attempts", ttl: int | None = None) -> int:
+def redis_incr_attempts(key: str, field: str = "attempts", ttl: Union[int, None] = None) -> int:
     r = get_redis()
     if not r:
         return -1
