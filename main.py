@@ -77,6 +77,8 @@ class CaptchaRequest(BaseModel):
 
 class HandwritingVerifyRequest(BaseModel):
     image_base64: str
+    user_id: Optional[int] = None
+    api_key: Optional[str] = None
     # keywords: Optional[str] = None  # 필요 시 활성화
 
 # 전역 상태: 서버 시작 시 1회 로드한 매니페스트와 선택된 챌린지
@@ -88,6 +90,8 @@ HANDWRITING_CURRENT_IMAGES: list[str] = []
 class AbstractVerifyRequest(BaseModel):
     challenge_id: str
     selections: List[int]
+    user_id: Optional[int] = None
+    api_key: Optional[str] = None
     # 클라이언트가 이미지별 서명을 전달해오면 서버가 무결성 재확인 가능 (선택)
     signatures: Optional[List[str]] = None
 
@@ -777,6 +781,9 @@ def verify_handwriting(request: HandwritingVerifyRequest):
     # 요청 시작 시간 기록
     start_time = time.time()
     
+    # 디버그: 요청 데이터 로그 출력
+    print(f"🔍 [handwriting-verify] user_id: {request.user_id}, api_key: {request.api_key}")
+    
     # data:image/png;base64,.... 형태 처리
     base64_str = request.image_base64 or ""
     if base64_str.startswith("data:image"):
@@ -792,6 +799,8 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         # 응답 시간 계산 및 로깅
         response_time = int((time.time() - start_time) * 1000)
         log_request(
+            user_id=request.user_id,
+            api_key=request.api_key,
             path="/api/handwriting-verify",
             method="POST",
             status_code=400,
@@ -824,6 +833,8 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         # 응답 시간 계산 및 로깅
         response_time = int((time.time() - start_time) * 1000)
         log_request(
+            user_id=request.user_id,
+            api_key=request.api_key,
             path="/api/handwriting-verify",
             method="POST",
             status_code=500,
@@ -839,6 +850,8 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         # 응답 시간 계산 및 로깅
         response_time = int((time.time() - start_time) * 1000)
         log_request(
+            user_id=request.user_id,
+            api_key=request.api_key,
             path="/api/handwriting-verify",
             method="POST",
             status_code=500,
@@ -878,6 +891,8 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         # 응답 시간 계산 및 로깅
         response_time = int((time.time() - start_time) * 1000)
         log_request(
+            user_id=request.user_id,
+            api_key=request.api_key,
             path="/api/handwriting-verify",
             method="POST",
             status_code=500,
@@ -907,6 +922,8 @@ def verify_handwriting(request: HandwritingVerifyRequest):
         # 응답 시간 계산 및 로깅
         response_time = int((time.time() - start_time) * 1000)
         log_request(
+            user_id=request.user_id,
+            api_key=request.api_key,
             path="/api/handwriting-verify",
             method="POST",
             status_code=500,
@@ -935,6 +952,8 @@ def verify_handwriting(request: HandwritingVerifyRequest):
     # 응답 시간 계산 및 로깅
     response_time = int((time.time() - start_time) * 1000)
     log_request(
+        user_id=request.user_id,
+        api_key=request.api_key,
         path="/api/handwriting-verify",
         method="POST",
         status_code=200,
@@ -1181,12 +1200,17 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
     # 요청 시작 시간 기록
     start_time = time.time()
     
+    # 디버그: 요청 데이터 로그 출력
+    print(f"🔍 [abstract-verify] user_id: {req.user_id}, api_key: {req.api_key}")
+    
     with ABSTRACT_SESSIONS_LOCK:
         session = ABSTRACT_SESSIONS.get(req.challenge_id)
     if not session:
         # 응답 시간 계산 및 로깅
         response_time = int((time.time() - start_time) * 1000)
         log_request(
+            user_id=req.user_id,
+            api_key=req.api_key,
             path="/api/abstract-verify",
             method="POST",
             status_code=404,
@@ -1257,6 +1281,8 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
     # 응답 시간 계산 및 로깅
     response_time = int((time.time() - start_time) * 1000)
     log_request(
+        user_id=req.user_id,
+        api_key=req.api_key,
         path="/api/abstract-verify",
         method="POST",
         status_code=200,
@@ -1380,12 +1406,17 @@ def create_image_challenge() -> Dict[str, Any]:
 class ImageGridVerifyRequest(BaseModel):
     challenge_id: str
     selections: List[int]
+    user_id: Optional[int] = None
+    api_key: Optional[str] = None
 
 
 @app.post("/api/imagecaptcha-verify")
 def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
     # 요청 시작 시간 기록
     start_time = time.time()
+    
+    # 디버그: 요청 데이터 로그 출력
+    print(f"🔍 [imagecaptcha-verify] user_id: {req.user_id}, api_key: {req.api_key}")
     
     with IMAGE_GRID_LOCK:
         session = IMAGE_GRID_SESSIONS.get(req.challenge_id)
@@ -1440,6 +1471,8 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
     # 응답 시간 계산 및 로깅
     response_time = int((time.time() - start_time) * 1000)
     log_request(
+        user_id=req.user_id,
+        api_key=req.api_key,
         path="/api/imagecaptcha-verify",
         method="POST",
         status_code=200,
