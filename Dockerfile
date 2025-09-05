@@ -38,14 +38,25 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# 애플리케이션 소스 복사
+# runtime deps for healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+# 애플리케이션 소스 복사 (모듈 디렉터리 포함)
 COPY main.py .
 COPY database.py .
 COPY word_list.txt .
-COPY src/ ./src/
 COPY .env.production .env
 COPY abstract_keyword_map.json .
 COPY abstract_class_dir_map.json .
+COPY src/ ./src/
+COPY api/ ./api/
+COPY config/ ./config/
+COPY services/ ./services/
+COPY schemas/ ./schemas/
+COPY infrastructure/ ./infrastructure/
+COPY domain/ ./domain/
+COPY state/ ./state/
+COPY utils/ ./utils/
 
 # 포트 노출
 EXPOSE 80
