@@ -44,7 +44,6 @@ COPY database.py .
 COPY word_list.txt .
 COPY src/ ./src/
 COPY .env.production .env
-COPY handwriting_manifest.json .
 COPY abstract_keyword_map.json .
 COPY abstract_class_dir_map.json .
 
