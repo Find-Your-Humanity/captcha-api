@@ -1434,35 +1434,7 @@ def create_abstract_captcha() -> Dict[str, Any]:
             ABSTRACT_SESSIONS[challenge_id] = session
         saved_in_memory_abs = True
 
-    # Redis에 저장 시도, 실패 시 in-memory 폴백
-    saved_in_memory_abs = False
-    if USE_REDIS and get_redis():
-        try:
-            doc = {
-                "type": "abstract",
-                "cid": challenge_id,
-                "target_class": target_class,
-                "keywords": keywords,
-                "image_urls": [img.get("url", "") for img in images],
-                "is_positive": list(is_positive_flags),
-                "attempts": 0,
-                "created_at": session.created_at,
-            }
-            ok = redis_set_json(rkey("abstract", challenge_id), doc, ttl_seconds)
-            if not ok:
-                raise RuntimeError("redis setex failed for abstract")
-        except Exception as e:
-            try:
-                print(f"⚠️ Redis write failed(abstract): {e}; fallback to memory")
-            except Exception:
-                pass
-            with ABSTRACT_SESSIONS_LOCK:
-                ABSTRACT_SESSIONS[challenge_id] = session
-            saved_in_memory_abs = True
-    else:
-        with ABSTRACT_SESSIONS_LOCK:
-            ABSTRACT_SESSIONS[challenge_id] = session
-        saved_in_memory_abs = True
+    
 
     # 디버그: 이미지 로드 시 정답 인덱스 및 샘플 URL 로그
     if DEBUG_ABSTRACT_VERIFY:
@@ -1745,35 +1717,6 @@ def create_image_challenge() -> Dict[str, Any]:
         target_label=target_label or "",
         correct_cells=correct_cells,
     )
-    # 세션 저장: Redis 우선, 실패 시 in-memory 폴백
-    saved_in_memory = False
-    if USE_REDIS and get_redis():
-        try:
-            doc = {
-                "type": "imagegrid",
-                "cid": challenge_id,
-                "image_url": url,
-                "attempts": 0,
-                "created_at": session.created_at,
-                # 프리컴퓨트 고정 경로: 정답/타겟도 저장
-                "target_label": session.target_label,
-                "correct_cells": list(session.correct_cells or []),
-            }
-            ok = redis_set_json(rkey("imagegrid", challenge_id), doc, session.ttl_seconds)
-            if not ok:
-                raise RuntimeError("redis setex failed")
-        except Exception as e:
-            try:
-                print(f"⚠️ Redis write failed(imagegrid): {e}; fallback to memory")
-            except Exception:
-                pass
-            with IMAGE_GRID_LOCK:
-                IMAGE_GRID_SESSIONS[challenge_id] = session
-            saved_in_memory = True
-    else:
-        with IMAGE_GRID_LOCK:
-            IMAGE_GRID_SESSIONS[challenge_id] = session
-        saved_in_memory = True
     # 세션 저장: Redis 우선, 실패 시 in-memory 폴백
     saved_in_memory = False
     if USE_REDIS and get_redis():
