@@ -37,3 +37,4 @@ def add_logging_to_file():
 
 if __name__ == "__main__":
     add_logging_to_file()
+

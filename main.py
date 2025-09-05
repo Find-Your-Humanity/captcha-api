@@ -210,6 +210,45 @@ def validate_api_key(api_key: str) -> _Opt[int]:
     except Exception:
         return None
 
+# --- API Usage Tracking ---
+async def track_api_usage(api_key: str, endpoint: str, status_code: int, response_time: int) -> None:
+    """Track API usage for rate limiting and analytics.
+    This is a placeholder implementation - extend as needed.
+    """
+    try:
+        # Get user_id from api_key
+        user_id = validate_api_key(api_key)
+        if not user_id:
+            return
+        
+        # Log the API usage
+        log_request(
+            user_id=user_id,
+            api_key=api_key,
+            path=endpoint,
+            method="POST",
+            status_code=status_code,
+            response_time=response_time
+        )
+        
+        # Update daily stats based on endpoint
+        api_type = "handwriting" if "handwriting" in endpoint else "unknown"
+        if "abstract" in endpoint:
+            api_type = "abstract"
+        elif "imagecaptcha" in endpoint:
+            api_type = "imagecaptcha"
+        
+        # Only update stats for successful requests
+        if status_code == 200:
+            update_daily_api_stats(api_type, True, response_time)
+        
+    except Exception as e:
+        # Log error but don't fail the main request
+        try:
+            print(f"⚠️ API usage tracking failed: {e}")
+        except Exception:
+            pass
+
 class CaptchaRequest(BaseModel):
     behavior_data: Dict[str, Any]
 
@@ -1144,7 +1183,7 @@ async def create_handwriting_challenge(x_api_key: str = Header(None, alias="X-AP
     if not x_api_key:
         raise HTTPException(status_code=401, detail="API key required")
     
-    user_id = await validate_api_key(x_api_key)
+    user_id = validate_api_key(x_api_key)
     if not user_id:
         raise HTTPException(status_code=429, detail="Rate limit exceeded or invalid API key")
     
@@ -1502,6 +1541,21 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
         if not is_pass and isinstance(attempts, int) and attempts >= 1:
             payload["message"] = "Too many attempts; please try an easier challenge."
             payload["downshift"] = True
+        
+        # 응답 시간 계산 및 로깅
+        response_time = int((time.time() - start_time) * 1000)
+        log_request(
+            user_id=req.user_id,
+            api_key=req.api_key,
+            path="/api/abstract-verify",
+            method="POST",
+            status_code=200,
+            response_time=response_time
+        )
+        
+        # 일별 통계 업데이트
+        update_daily_api_stats('abstract', is_pass, response_time)
+        
         return payload
 
     # In-memory 폴백 경로(기존 동작)
@@ -1573,7 +1627,21 @@ def verify_abstract_captcha(req: AbstractVerifyRequest) -> Dict[str, Any]:
     if not is_pass and attempts >= 1:
         payload["message"] = "Too many attempts; please try an easier challenge."
         payload["downshift"] = True
-    # removed verbose payload preview log for abstract-verify
+    
+    # 응답 시간 계산 및 로깅
+    response_time = int((time.time() - start_time) * 1000)
+    log_request(
+        user_id=req.user_id,
+        api_key=req.api_key,
+        path="/api/abstract-verify",
+        method="POST",
+        status_code=200,
+        response_time=response_time
+    )
+    
+    # 일별 통계 업데이트
+    update_daily_api_stats('abstract', is_pass, response_time)
+    
     return payload
 
 
@@ -1786,6 +1854,21 @@ def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
         }
         if not ok and isinstance(attempts, int) and attempts >= 1:
             payload["downshift"] = True
+        
+        # 응답 시간 계산 및 로깅
+        response_time = int((time.time() - start_time) * 1000)
+        log_request(
+            user_id=req.user_id,
+            api_key=req.api_key,
+            path="/api/imagecaptcha-verify",
+            method="POST",
+            status_code=200,
+            response_time=response_time
+        )
+        
+        # 일별 통계 업데이트
+        update_daily_api_stats('imagecaptcha', ok, response_time)
+        
         return payload
 
     # In-memory 폴백 경로(기존 동작 유지)

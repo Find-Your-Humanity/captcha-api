@@ -14,3 +14,4 @@ CREATE TABLE IF NOT EXISTS daily_api_stats (
     INDEX idx_date (date),
     INDEX idx_api_type (api_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
