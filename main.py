@@ -44,6 +44,11 @@ try:
     import redis  # type: ignore
 except Exception:
     redis = None  # optional import; guarded by USE_REDIS flag
+try:
+    # redis-py cluster client (optional)
+    from redis.cluster import RedisCluster  # type: ignore
+except Exception:
+    RedisCluster = None  # type: ignore
 
 USE_REDIS = os.getenv("USE_REDIS", "false").lower() == "true"
 REDIS_HOST = os.getenv("REDIS_HOST")
@@ -52,6 +57,7 @@ REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_SSL = os.getenv("REDIS_SSL", "false").lower() == "true"
 REDIS_PREFIX = os.getenv("REDIS_PREFIX", "rcaptcha:")
+REDIS_CLUSTER = os.getenv("REDIS_CLUSTER", "false").lower() == "true"
 REDIS_TIMEOUT_MS = int(os.getenv("REDIS_TIMEOUT_MS", "2000"))
 
 _redis_client = None
@@ -69,17 +75,25 @@ def get_redis():
             pass
         return None
     try:
-        _redis_client = redis.Redis(
+        if RedisCluster is None:
+            try:
+                print("⚠️ redis-py cluster client not available; install redis~=5.0 and use clustered endpoint")
+            except Exception:
+                pass
+            return None
+
+        client = RedisCluster(
             host=REDIS_HOST,
             port=REDIS_PORT,
-            db=REDIS_DB,
             password=REDIS_PASSWORD,
             ssl=REDIS_SSL,
+            decode_responses=True,
             socket_connect_timeout=REDIS_TIMEOUT_MS / 1000.0,
             socket_timeout=REDIS_TIMEOUT_MS / 1000.0,
-            decode_responses=True,
         )
-        _redis_client.ping()
+
+        client.ping()
+        _redis_client = client
         return _redis_client
     except Exception as e:
         try:
