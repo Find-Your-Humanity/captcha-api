@@ -140,10 +140,10 @@ def update_daily_api_stats(api_type: str, is_success: bool, response_time: int) 
             
             mapped_api_type = api_type_mapping.get(api_type, api_type)
             
-            # 오늘 날짜의 통계 업데이트 (INSERT ... ON DUPLICATE KEY UPDATE)
+            # KST 기준 오늘 날짜의 통계 업데이트 (INSERT ... ON DUPLICATE KEY UPDATE)
             upsert_query = """
                 INSERT INTO daily_api_stats (date, api_type, total_requests, success_requests, failed_requests, avg_response_time)
-                VALUES (CURDATE(), %s, 1, %s, %s, %s)
+                VALUES (DATE(CONVERT_TZ(NOW(), '+00:00', '+09:00')), %s, 1, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     total_requests = total_requests + 1,
                     success_requests = success_requests + %s,
