@@ -231,6 +231,6 @@ def map_local_to_key(local_path: str) -> Optional[str]:
     return str(rel).replace(os.sep, "/").lstrip("/")
 
 
-from ..routers_utils_shared import get_handwriting_state  # re-export if exists
+from .routers_utils_shared import get_handwriting_state  # re-export if exists
 
 
