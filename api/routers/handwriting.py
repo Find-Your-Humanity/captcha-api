@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import base64, uuid, time
 from datetime import datetime
 from pathlib import Path
@@ -84,7 +84,7 @@ def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
 
 
 @router.post("/api/handwriting-challenge")
-async def create_handwriting(x_api_key: str | None = None) -> Dict[str, Any]:
+async def create_handwriting(x_api_key: Optional[str] = None) -> Dict[str, Any]:
     # 기존 main 로직을 단순화해 전달: 샘플 URL과 타겟 클래스는 main의 상태를 사용하는 곳에서 받아오도록 설계 필요.
     # Phase 3에서는 라우터에서 최소한의 조합만 수행.
     samples: List[str] = []
