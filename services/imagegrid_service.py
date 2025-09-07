@@ -15,7 +15,9 @@ def create_imagegrid_challenge() -> Dict[str, Any]:
         from pymongo import MongoClient  # type: ignore
         uri = os.getenv("MONGO_URI", os.getenv("MONGO_URL", ""))
         dbn = os.getenv("MONGO_DB", "")
-        coln = os.getenv("MONGO_MANIFEST_COLLECTION", os.getenv("MONGO_COLLECTION", ""))
+        # image captcha는 기본적으로 basic_label_filtered 컬렉션을 사용하도록 고정
+        # 환경변수 MONGO_BASIC_COLLECTION으로 오버라이드 가능
+        coln = os.getenv("MONGO_BASIC_COLLECTION", "basic_label_filtered")
         client = MongoClient(uri, serverSelectionTimeoutMS=3000)
         coll = client[dbn][coln]
         doc = coll.aggregate([{"$sample": {"size": 1}}]).next()
