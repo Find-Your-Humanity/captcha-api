@@ -61,7 +61,7 @@ def create() -> Dict[str, Any]:
     min_positive_guarantee = desired_positive
     if is_remote_source:
         # remote 모드는 utils로 분리된 헬퍼에서 제공하는 파일 키 기반으로 구성한다고 가정
-        from ..routers_utils import get_file_keys_by_class, get_other_class_keys
+        from .routers_utils import get_file_keys_by_class, get_other_class_keys
         class_keys = get_file_keys_by_class(target_class)
         other_keys_all = get_other_class_keys(target_class)
         random.shuffle(class_keys)
@@ -78,7 +78,7 @@ def create() -> Dict[str, Any]:
             raise HTTPException(status_code=500, detail="Not enough remote images in manifest")
     else:
         # local 모드: 디렉터리 기반 샘플 구성 후 ML 점수 기반 선택
-        from ..routers_utils import sample_images_from_dirs, iter_random_images_excluding
+        from .routers_utils import sample_images_from_dirs, iter_random_images_excluding
         guaranteed_positive_paths = []
         if class_dir_map and target_class in class_dir_map:
             guaranteed_positive_paths = sample_images_from_dirs(class_dir_map[target_class], desired_count=min_positive_guarantee)
