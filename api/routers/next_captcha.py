@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 import threading
+from bson import ObjectId
 
 from schemas.requests import CaptchaRequest
 from config.settings import (
@@ -42,7 +43,6 @@ def _get_behavior_mongo_client():
         _mongo_client_for_behavior = None
         return None
 
-
 def _save_behavior_to_mongo(doc: Dict[str, Any]) -> None:
     if not SAVE_BEHAVIOR_TO_MONGO:
         return
@@ -66,6 +66,7 @@ def _save_behavior_to_mongo(doc: Dict[str, Any]) -> None:
 @router.post("/api/next-captcha")
 def next_captcha(request: CaptchaRequest):
     behavior_data = request.behavior_data
+    correlation_id = ObjectId()
     try:
         mm = len((behavior_data or {}).get("mouseMovements", []))
         mc = len((behavior_data or {}).get("mouseClicks", []))
@@ -79,7 +80,9 @@ def next_captcha(request: CaptchaRequest):
         )
         try:
             mongo_doc = {
+                "_id": correlation_id,
                 "behavior_data": behavior_data,
+                "createdAt": datetime.utcnow().isoformat(),
             }
             _save_behavior_to_mongo(mongo_doc)
         except Exception:
@@ -122,6 +125,18 @@ def next_captcha(request: CaptchaRequest):
         confidence_score = 75
         is_bot = False
         ML_SERVICE_USED = False
+
+    # 점수 저장: behavior_data의 생성된 correlation_id를 참조하여 별도 컬렉션에 저장
+    try:
+        client = _get_behavior_mongo_client()
+        if client and BEHAVIOR_MONGO_DB:
+            score_coll = client[BEHAVIOR_MONGO_DB]["behavior_data_score"]
+            score_coll.insert_one({
+                "behavior_data_id": correlation_id,
+                "confidence_score": confidence_score,
+            })
+    except Exception:
+        pass
 
     captcha_type = "abstract"
     next_captcha_value = "abstractcaptcha"
