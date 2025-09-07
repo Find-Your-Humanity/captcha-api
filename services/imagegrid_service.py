@@ -51,6 +51,7 @@ def create_imagegrid_challenge() -> Dict[str, Any]:
                 "correct_cells": list(session.correct_cells or []),
             }
             ok = redis_set_json(rkey("imagegrid", challenge_id), doc, session.ttl_seconds)
+            print(f"🧰 [imagegrid] redis set {rkey('imagegrid', challenge_id)} ok={ok}")
             if not ok:
                 raise RuntimeError("redis setex failed")
         except Exception:
