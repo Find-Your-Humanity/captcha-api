@@ -21,7 +21,7 @@ from domain.models import AbstractCaptchaSession
 from state.sessions import ABSTRACT_SESSIONS, ABSTRACT_SESSIONS_LOCK
 from utils.cdn import build_cdn_url
 from .routers_utils import map_local_to_key
-from ..routers_utils import (
+from .routers_utils import (
     get_abstract_class_list,
     get_class_dir_mapping,
     get_keyword_map,
