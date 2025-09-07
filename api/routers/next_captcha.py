@@ -123,8 +123,8 @@ def next_captcha(request: CaptchaRequest):
         is_bot = False
         ML_SERVICE_USED = False
 
-    captcha_type = "image"
-    next_captcha_value = "imagecaptcha"
+    captcha_type = "abstract"
+    next_captcha_value = "abstractcaptcha"
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
