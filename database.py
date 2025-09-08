@@ -55,6 +55,7 @@ def log_request(
     user_id: Optional[int] = None,
     api_key: Optional[str] = None,
     path: str = "",
+    api_type: Optional[str] = None,
     method: str = "POST",
     status_code: int = 200,
     response_time: int = 0,
@@ -63,14 +64,15 @@ def log_request(
     """request_logs 테이블에 요청 로그를 기록합니다. (중복 방지)"""
     try:
         with get_db_cursor() as cursor:
-            # 같은 사용자가 1시간 내에 같은 API를 호출했는지 확인
+            # 같은 사용자가 1시간 내에 같은 API를 호출했는지 확인 (api_key, api_type 기준 포함)
             check_query = """
                 SELECT id FROM request_logs 
                 WHERE user_id = %s AND path = %s 
+                AND (api_key <=> %s) AND (api_type <=> %s)
                 AND request_time > DATE_SUB(NOW(), INTERVAL 1 HOUR)
                 ORDER BY request_time DESC LIMIT 1
             """
-            cursor.execute(check_query, (user_id, path))
+            cursor.execute(check_query, (user_id, path, api_key, api_type))
             existing_log = cursor.fetchone()
             
             if existing_log:
@@ -84,15 +86,15 @@ def log_request(
                 logger.debug(f"요청 로그 업데이트 완료: {path} - {status_code} (재시도)")
                 return True
             
-            # 새 로그 생성
+            # 새 로그 생성 (api_key, api_type 포함)
             insert_query = """
                 INSERT INTO request_logs 
-                (user_id, path, method, status_code, response_time, user_agent, request_time)
-                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                (user_id, api_key, path, api_type, method, status_code, response_time, user_agent, request_time)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
             """
             
             cursor.execute(insert_query, (
-                user_id, path, method, status_code, 
+                user_id, api_key, path, api_type, method, status_code, 
                 response_time, user_agent
             ))
             
@@ -149,10 +151,10 @@ def update_daily_api_stats(api_type: str, is_success: bool, response_time: int) 
                 INSERT INTO daily_api_stats (date, api_type, total_requests, success_requests, failed_requests, avg_response_time)
                 VALUES (%s, %s, 1, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
+                    avg_response_time = (avg_response_time * total_requests + VALUES(avg_response_time)) / (total_requests + 1),
                     total_requests = total_requests + 1,
-                    success_requests = success_requests + %s,
-                    failed_requests = failed_requests + %s,
-                    avg_response_time = (avg_response_time * (total_requests - 1) + %s) / total_requests,
+                    success_requests = success_requests + VALUES(success_requests),
+                    failed_requests = failed_requests + VALUES(failed_requests),
                     updated_at = NOW()
             """
             
@@ -160,8 +162,7 @@ def update_daily_api_stats(api_type: str, is_success: bool, response_time: int) 
             failed_count = 0 if is_success else 1
             
             cursor.execute(upsert_query, (
-                kst_today, mapped_api_type, success_count, failed_count, response_time,
-                success_count, failed_count, response_time
+                kst_today, mapped_api_type, success_count, failed_count, response_time
             ))
             
             logger.debug(f"일별 API 통계 업데이트 완료: {mapped_api_type} - 성공: {is_success}")
