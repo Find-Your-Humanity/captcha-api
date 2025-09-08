@@ -139,8 +139,29 @@ def next_captcha(request: CaptchaRequest):
     except Exception:
         pass
 
-    captcha_type = "abstract"
-    next_captcha_value = "abstractcaptcha"
+    # [계획된 로직 안내 - 아직 미적용]
+    # 사용자 행동 데이터 신뢰도 점수(confidence_score)를 기준으로 다음 캡차 타입을 결정합니다.
+    # - 95 이상: 추가 캡차 없이 통과(pass)
+    # - 80 이상: 이미지 그리드 캡차(Basic) → "imagecaptcha"
+    # - 50 이상: 추상 이미지 캡차 → "abstractcaptcha"
+    # - 50 미만: 손글씨 캡차 → "handwritingcaptcha"
+    #
+    # 아래는 실제 적용 시 참고할 예시 코드입니다. (주석 처리)
+    # if confidence_score >= 95:
+    #     next_captcha_value = None  # pass
+    #     captcha_type = "pass"
+    # elif confidence_score >= 80:
+    #     next_captcha_value = "imagecaptcha"   # Basic
+    #     captcha_type = "image"
+    # elif confidence_score >= 50:
+    #     next_captcha_value = "abstractcaptcha"
+    #     captcha_type = "abstract"
+    # else:
+    #     next_captcha_value = "handwritingcaptcha"
+    #     captcha_type = "handwriting"
+
+    captcha_type = "handwriting"
+    next_captcha_value = "handwritingcaptcha"
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
