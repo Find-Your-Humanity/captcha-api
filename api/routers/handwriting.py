@@ -15,6 +15,10 @@ from config.settings import (
     DEBUG_SAVE_OCR_UPLOADS,
     DEBUG_OCR_DIR,
     SUCCESS_REDIRECT_URL,
+    ASSET_BASE_URL,
+    MONGO_URI,
+    MONGO_DB,
+    MONGO_MANIFEST_COLLECTION,
 )
 from utils.text import normalize_text
 from utils.usage import track_api_usage
@@ -129,10 +133,75 @@ async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
 
 @router.post("/api/handwriting-challenge")
 async def create_handwriting(x_api_key: Optional[str] = None) -> Dict[str, Any]:
-    # 기존 main 로직을 단순화해 전달: 샘플 URL과 타겟 클래스는 main의 상태를 사용하는 곳에서 받아오도록 설계 필요.
-    # Phase 3에서는 라우터에서 최소한의 조합만 수행.
+    """abstract_manifest 컬렉션에서 임의의 클래스 하나를 고르고 해당 클래스의 키 5개를 샘플로 반환.
+    - 반환하는 samples는 ASSET_BASE_URL이 설정된 경우 해당 프리픽스를 붙인 절대 URL로 변환
+    - Redis에는 challenge_id와 함께 target_class를 저장하여 이후 검증 시 매칭
+    """
     samples: List[str] = []
     target_class = ""
+
+    # Mongo에서 abstract manifest 로드: { class -> [keys...] }
+    manifest: Dict[str, List[str]] = {}
+    try:
+        if MONGO_URI and MONGO_DB and MONGO_MANIFEST_COLLECTION:
+            from pymongo import MongoClient  # type: ignore
+            client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
+            try:
+                c = client[MONGO_DB][MONGO_MANIFEST_COLLECTION]
+                # per-class 문서 형태 우선: { _id: 'manifest:...', class: 'apple', keys: [...] }
+                any_docs = False
+                try:
+                    for d in c.find({"_id": {"$regex": "^manifest:"}}, {"class": 1, "keys": 1}):
+                        any_docs = True
+                        cls = str(d.get("class") or "").strip()
+                        keys = [str(x) for x in (d.get("keys") or []) if isinstance(x, (str,))]
+                        if cls and keys:
+                            manifest[cls] = keys
+                except Exception:
+                    pass
+                # 단일 문서 폴백: { _id: MONGO_DOC_ID, data/json_data: { class: [keys] } }
+                if not manifest:
+                    try:
+                        from config.settings import MONGO_DOC_ID  # late import
+                        doc = c.find_one({"_id": MONGO_DOC_ID})
+                        if doc:
+                            data = doc.get("json_data") or doc.get("data")
+                            if isinstance(data, dict):
+                                for k, v in data.items():
+                                    if isinstance(v, list):
+                                        manifest[str(k)] = [str(x) for x in v]
+                                    else:
+                                        manifest[str(k)] = [str(v)]
+                    except Exception:
+                        pass
+            finally:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # 임의 클래스 선택 및 키 5개 샘플링
+    import random
+    try:
+        if manifest:
+            classes = list(manifest.keys())
+            random.shuffle(classes)
+            pick = classes[0]
+            keys = list(manifest.get(pick, []) or [])
+            random.shuffle(keys)
+            picked = keys[:5]
+            target_class = pick
+            # URL 변환: ASSET_BASE_URL 프리픽스가 있으면 적용
+            if ASSET_BASE_URL:
+                samples = [f"{ASSET_BASE_URL.rstrip('/')}/{k.lstrip('/')}" for k in picked]
+            else:
+                samples = picked
+    except Exception:
+        samples = []
+        target_class = ""
+
     return create_handwriting_challenge(samples, target_class)
 
 
