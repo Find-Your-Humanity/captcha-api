@@ -22,6 +22,7 @@ from config.settings import (
 )
 from utils.text import normalize_text
 from utils.usage import track_api_usage
+from infrastructure.redis_client import rkey, get_redis, redis_get_json
 
 
 router = APIRouter()
@@ -114,7 +115,26 @@ async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
     text_norm = normalize_text(extracted)
 
     # 4) 검증 (세션/시도증가/조건부삭제는 서비스 내부에서 처리)
+    #    디버깅을 위해 Redis에서 target_class를 조회하여 예측과 함께 출력
+    target_class_dbg = None
+    try:
+        if get_redis() and (req.challenge_id or ""):
+            _doc = redis_get_json(rkey("handwriting", str(req.challenge_id)))
+            if isinstance(_doc, dict):
+                target_class_dbg = str((_doc.get("target_class") or "").strip()) or None
+    except Exception:
+        target_class_dbg = None
+
     result = verify_handwriting(req.challenge_id or "", text_norm, user_id=req.user_id, api_key=req.api_key)
+
+    # 디버깅 로그: 예측값 vs 정답 클래스, 매칭 결과
+    try:
+        print(
+            f"✍️ [handwriting-verify] challenge_id={req.challenge_id} | predicted='{text_norm}' | "
+            f"target_class='{target_class_dbg}' | success={result.get('success')}"
+        )
+    except Exception:
+        pass
     
     # DB 로깅: 성공/실패 요청
     if req.api_key:
