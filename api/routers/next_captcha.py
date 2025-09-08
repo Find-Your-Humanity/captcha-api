@@ -139,8 +139,8 @@ def next_captcha(request: CaptchaRequest):
     except Exception:
         pass
 
-    captcha_type = "image"
-    next_captcha_value = "imagecaptcha"
+    captcha_type = "abstract"
+    next_captcha_value = "abstractcaptcha"
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
