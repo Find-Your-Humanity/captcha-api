@@ -17,13 +17,14 @@ from config.settings import (
     SUCCESS_REDIRECT_URL,
 )
 from utils.text import normalize_text
+from utils.usage import track_api_usage
 
 
 router = APIRouter()
 
 
 @router.post("/api/handwriting-verify")
-def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
+async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
     start_time = time.time()
     # 1) Base64 디코드 (data:image 접두 처리)
     base64_str = req.image_base64 or ""
@@ -32,6 +33,14 @@ def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
     try:
         image_bytes = base64.b64decode(base64_str)
     except Exception as e:
+        # DB 로깅: 실패한 요청
+        if req.api_key:
+            await track_api_usage(
+                api_key=req.api_key,
+                endpoint="/api/handwriting-verify",
+                status_code=400,
+                response_time=int((time.time() - start_time) * 1000)
+            )
         return {"success": False, "message": f"Invalid base64 image: {e}"}
 
     # 디버그 저장
@@ -49,6 +58,14 @@ def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
 
     # 2) OCR API 호출
     if not OCR_API_URL:
+        # DB 로깅: 설정 오류
+        if req.api_key:
+            await track_api_usage(
+                api_key=req.api_key,
+                endpoint="/api/handwriting-verify",
+                status_code=500,
+                response_time=int((time.time() - start_time) * 1000)
+            )
         return {"success": False, "message": "OCR_API_URL is not configured on server."}
 
     def _call_ocr_multipart():
@@ -61,6 +78,14 @@ def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
         resp.raise_for_status()
         ocr_json = resp.json()
     except Exception as e:
+        # DB 로깅: OCR 실패
+        if req.api_key:
+            await track_api_usage(
+                api_key=req.api_key,
+                endpoint="/api/handwriting-verify",
+                status_code=500,
+                response_time=int((time.time() - start_time) * 1000)
+            )
         return {"success": False, "message": f"OCR API request failed: {e}"}
 
     # 3) 텍스트 추출 및 정규화
@@ -72,12 +97,31 @@ def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
             or (ocr_json.get("result", {}) or {}).get("text")
         )
     if not extracted or not isinstance(extracted, str):
+        # DB 로깅: OCR 응답 오류
+        if req.api_key:
+            await track_api_usage(
+                api_key=req.api_key,
+                endpoint="/api/handwriting-verify",
+                status_code=500,
+                response_time=int((time.time() - start_time) * 1000)
+            )
         return {"success": False, "message": "OCR API response missing text field"}
 
     text_norm = normalize_text(extracted)
 
     # 4) 검증 (세션/시도증가/조건부삭제는 서비스 내부에서 처리)
     result = verify_handwriting(req.challenge_id or "", text_norm, user_id=req.user_id, api_key=req.api_key)
+    
+    # DB 로깅: 성공/실패 요청
+    if req.api_key:
+        status_code = 200 if result.get("success") else 400
+        await track_api_usage(
+            api_key=req.api_key,
+            endpoint="/api/handwriting-verify",
+            status_code=status_code,
+            response_time=int((time.time() - start_time) * 1000)
+        )
+    
     if result.get("success") and SUCCESS_REDIRECT_URL:
         result["redirect_url"] = SUCCESS_REDIRECT_URL
     return result

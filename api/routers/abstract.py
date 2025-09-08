@@ -27,20 +27,44 @@ from .routers_utils import (
     get_keyword_map,
     batch_predict_prob,
 )
+from utils.usage import track_api_usage
 
 
 router = APIRouter()
 
 
 @router.post("/api/abstract-verify")
-def verify(req: AbstractVerifyRequest) -> Dict[str, Any]:
+async def verify(req: AbstractVerifyRequest) -> Dict[str, Any]:
+    start_time = time.time()
+    
     # signatures가 포함되면 무결성 검증
     if req.signatures is not None:
         # 라우터 레벨에서 간단 길이 검증 (실제 길이는 서비스 내부 doc/image_urls 기반으로 재확인)
         for i, sig in enumerate(req.signatures):
             if not isinstance(sig, str):
+                # DB 로깅: 서명 검증 실패
+                if req.api_key:
+                    await track_api_usage(
+                        api_key=req.api_key,
+                        endpoint="/api/abstract-verify",
+                        status_code=400,
+                        response_time=int((time.time() - start_time) * 1000)
+                    )
                 return {"success": False, "message": "Invalid signature type"}
-    return verify_abstract(req.challenge_id, req.selections, user_id=req.user_id, api_key=req.api_key)
+    
+    result = verify_abstract(req.challenge_id, req.selections, user_id=req.user_id, api_key=req.api_key)
+    
+    # DB 로깅: 성공/실패 요청
+    if req.api_key:
+        status_code = 200 if result.get("success") else 400
+        await track_api_usage(
+            api_key=req.api_key,
+            endpoint="/api/abstract-verify",
+            status_code=status_code,
+            response_time=int((time.time() - start_time) * 1000)
+        )
+    
+    return result
 
 
 @router.post("/api/abstract-captcha")
