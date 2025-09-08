@@ -130,6 +130,7 @@ def next_captcha(request: CaptchaRequest):
     try:
         client = _get_behavior_mongo_client()
         if client and BEHAVIOR_MONGO_DB:
+            # score는 basic_data_score 컬렉션에 저장
             score_coll = client[BEHAVIOR_MONGO_DB]["behavior_data_score"]
             score_coll.insert_one({
                 "behavior_data_id": correlation_id,
@@ -138,8 +139,8 @@ def next_captcha(request: CaptchaRequest):
     except Exception:
         pass
 
-    captcha_type = "abstract"
-    next_captcha_value = "abstractcaptcha"
+    captcha_type = "image"
+    next_captcha_value = "imagecaptcha"
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
