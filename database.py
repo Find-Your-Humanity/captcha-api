@@ -66,11 +66,11 @@ def log_request(
             # 같은 사용자가 1시간 내에 같은 API를 호출했는지 확인
             check_query = """
                 SELECT id FROM request_logs 
-                WHERE user_id = %s AND api_key = %s AND path = %s 
+                WHERE user_id = %s AND path = %s 
                 AND request_time > DATE_SUB(NOW(), INTERVAL 1 HOUR)
                 ORDER BY request_time DESC LIMIT 1
             """
-            cursor.execute(check_query, (user_id, api_key, path))
+            cursor.execute(check_query, (user_id, path))
             existing_log = cursor.fetchone()
             
             if existing_log:
@@ -87,12 +87,12 @@ def log_request(
             # 새 로그 생성
             insert_query = """
                 INSERT INTO request_logs 
-                (user_id, api_key, path, method, status_code, response_time, user_agent, request_time)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                (user_id, path, method, status_code, response_time, user_agent, request_time)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
             """
             
             cursor.execute(insert_query, (
-                user_id, api_key, path, method, status_code, 
+                user_id, path, method, status_code, 
                 response_time, user_agent
             ))
             
@@ -113,7 +113,6 @@ def cleanup_duplicate_logs() -> bool:
                 INNER JOIN request_logs r2 
                 WHERE r1.id < r2.id 
                 AND r1.user_id = r2.user_id 
-                AND r1.api_key = r2.api_key 
                 AND r1.path = r2.path
                 AND r1.request_time > DATE_SUB(NOW(), INTERVAL 1 HOUR)
                 AND r2.request_time > DATE_SUB(NOW(), INTERVAL 1 HOUR)

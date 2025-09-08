@@ -132,7 +132,7 @@ def validate_api_key(api_key: str) -> _Opt[int]:
                 """
                 SELECT user_id
                 FROM api_keys
-                WHERE api_key = %s AND (status = 'active' OR status IS NULL)
+                WHERE key_id = %s AND (is_active = 1 OR is_active IS NULL)
                 LIMIT 1
                 """,
                 (api_key,)
