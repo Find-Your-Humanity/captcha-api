@@ -172,6 +172,56 @@ def update_daily_api_stats(api_type: str, is_success: bool, response_time: int) 
         logger.error(f"일별 API 통계 업데이트 실패: {e}")
         return False
 
+def update_daily_api_stats_by_key(
+    user_id: int,
+    api_key: str,
+    api_type: str,
+    response_time: int,
+    is_success: bool,
+) -> bool:
+    """사용자/키/타입 단위 일별 집계 업서트."""
+    try:
+        with get_db_cursor() as cursor:
+            # KST 오늘 날짜 계산
+            from datetime import datetime, timezone, timedelta
+            kst_tz = timezone(timedelta(hours=9))
+            kst_today = datetime.now(kst_tz).date()
+
+            success_count = 1 if is_success else 0
+            failed_count = 0 if is_success else 1
+
+            upsert = """
+                INSERT INTO daily_api_stats_by_key
+                  (user_id, api_key, api_type, date, total_requests, success_requests, failed_requests, total_response_time, avg_response_time)
+                VALUES
+                  (%s, %s, %s, %s, 1, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                  total_requests = total_requests + 1,
+                  success_requests = success_requests + VALUES(success_requests),
+                  failed_requests = failed_requests + VALUES(failed_requests),
+                  total_response_time = total_response_time + VALUES(total_response_time),
+                  avg_response_time = ROUND((total_response_time + VALUES(total_response_time)) / (total_requests + 1), 2),
+                  updated_at = NOW()
+            """
+
+            cursor.execute(
+                upsert,
+                (
+                    user_id,
+                    api_key,
+                    api_type,
+                    kst_today,
+                    success_count,
+                    failed_count,
+                    response_time,
+                    response_time,
+                ),
+            )
+            return True
+    except Exception as e:
+        logger.error(f"daily_api_stats_by_key 업서트 실패: {e}")
+        return False
+
 def get_daily_api_stats(start_date: str, end_date: str, api_type: str = None) -> list:
     """일별 API 통계를 조회합니다."""
     try:
