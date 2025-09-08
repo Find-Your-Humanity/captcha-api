@@ -156,7 +156,6 @@ async def track_api_usage(api_key: str, endpoint: str, status_code: int, respons
         # Log the API usage
         log_request(
             user_id=user_id,
-            api_key=api_key,
             path=endpoint,
             method="POST",
             status_code=status_code,
