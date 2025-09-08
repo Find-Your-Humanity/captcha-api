@@ -160,8 +160,8 @@ def next_captcha(request: CaptchaRequest):
     #     next_captcha_value = "handwritingcaptcha"
     #     captcha_type = "handwriting"
 
-    captcha_type = "handwriting"
-    next_captcha_value = "handwritingcaptcha"
+    captcha_type = "image"
+    next_captcha_value = "imagecaptcha"
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
