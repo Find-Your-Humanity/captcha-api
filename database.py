@@ -36,6 +36,20 @@ def get_db_cursor():
         with conn.cursor(pymysql.cursors.DictCursor) as cursor:
             yield cursor
 
+def test_connection():
+    """
+    데이터베이스 연결 테스트
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                result = cursor.fetchone()
+                return result is not None
+    except Exception as e:
+        print(f"데이터베이스 연결 테스트 실패: {e}")
+        return False
+
 def verify_api_key(api_key: str) -> dict:
     """
     API 키 검증 함수
