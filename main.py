@@ -64,6 +64,8 @@ from api.routers.next_captcha import router as next_captcha_router
 from api.routers.abstract import router as abstract_router
 from api.routers.handwriting import router as handwriting_router
 from api.routers.imagegrid import router as imagegrid_router
+from api.routers.secure_captcha import router as secure_captcha_router
+from api.routers.verify_captcha import router as verify_captcha_router
 from utils.text import normalize_text
 from infrastructure.redis_client import (
     get_redis,
@@ -119,6 +121,8 @@ app.include_router(next_captcha_router)
 app.include_router(handwriting_router)
 app.include_router(abstract_router)
 app.include_router(imagegrid_router)
+app.include_router(secure_captcha_router)
+app.include_router(verify_captcha_router)
 
 # --- API Key validation helper ---
 from typing import Optional as _Opt

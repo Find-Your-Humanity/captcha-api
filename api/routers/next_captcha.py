@@ -4,10 +4,11 @@ from typing import Any, Dict, Optional
 import json
 import httpx
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import threading
 from bson import ObjectId
+import secrets
 
 from schemas.requests import CaptchaRequest
 from config.settings import (
@@ -20,10 +21,56 @@ from config.settings import (
     BEHAVIOR_MONGO_COLLECTION,
 )
 from utils.usage import track_api_usage
-from database import verify_api_key, verify_domain_access, update_api_key_usage
+from database import verify_api_key, verify_domain_access, update_api_key_usage, get_db_connection
 
 
 router = APIRouter()
+
+
+def generate_captcha_token(api_key: str, captcha_type: str, user_id: int) -> str:
+    """
+    캡차 토큰을 생성하고 데이터베이스에 저장합니다.
+    """
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now() + timedelta(minutes=10)  # 10분 후 만료
+    
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO captcha_tokens (token_id, api_key_id, user_id, captcha_type, expires_at, created_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW())
+                """, (token, api_key, user_id, captcha_type, expires_at))
+        return token
+    except Exception as e:
+        print(f"캡차 토큰 생성 오류: {e}")
+        return token  # 오류가 있어도 토큰은 반환
+
+
+def verify_captcha_token(token: str, api_key: str) -> bool:
+    """
+    캡차 토큰을 검증합니다.
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT id FROM captcha_tokens 
+                    WHERE token_id = %s AND api_key_id = %s AND expires_at > NOW() AND is_used = 0
+                """, (token, api_key))
+                
+                result = cursor.fetchone()
+                if result:
+                    # 토큰을 사용됨으로 표시
+                    cursor.execute("""
+                        UPDATE captcha_tokens SET is_used = 1, used_at = NOW() 
+                        WHERE id = %s
+                    """, (result[0],))
+                    return True
+                return False
+    except Exception as e:
+        print(f"캡차 토큰 검증 오류: {e}")
+        return False
 
 
 _mongo_client_for_behavior = None
@@ -65,31 +112,60 @@ def _save_behavior_to_mongo(doc: Dict[str, Any]) -> None:
 
 
 @router.post("/api/next-captcha")
-def next_captcha(request: CaptchaRequest, x_api_key: Optional[str] = Header(None)):
-    # 데모 모드: 특정 데모 키들은 검증 우회
-    DEMO_KEYS = [
-        'rc_demo_homepage_test_key',
-        'rc_live_f49a055d62283fd02e8203ccaba70fc2'
-    ]
+def next_captcha(
+    request: CaptchaRequest, 
+    x_api_key: Optional[str] = Header(None),
+    x_secret_key: Optional[str] = Header(None)
+):
+    print(f"🚀 [/api/next-captcha] 요청 시작 - API Key: {x_api_key[:20] if x_api_key else 'None'}...")
     
-    if x_api_key in DEMO_KEYS:
-        print(f"🎭 데모 모드: {x_api_key} 키로 캡차 요청 처리")
-        # 데모 모드에서는 API 키 검증을 우회하고 바로 캡차 처리
+    # API 키 검증
+    if not x_api_key:
+        print("❌ API 키 없음")
+        raise HTTPException(status_code=401, detail="API key required")
+    
+    # 데모 키 하드코딩 (홈페이지 데모용)
+    DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
+    DEMO_SECRET_KEY = 'rc_sk_273d06a8a03799f7637083b50f4f08f2aa29ffb56fd1bfe64833850b4b16810c'
+    
+    # 데모 키인 경우 자동으로 비밀 키 설정 (데이터베이스 검증 우회)
+    if x_api_key == DEMO_PUBLIC_KEY:
+        x_secret_key = DEMO_SECRET_KEY
+        api_key_info = {
+            'key_id': 'demo',
+            'api_key_id': 'demo',  # update_api_key_usage 함수에서 필요
+            'user_id': 6,
+            'is_demo': True,
+            'max_requests_per_day': 1000,
+            'max_requests_per_month': 30000
+        }
+        print(f"🎯 데모 모드: {DEMO_PUBLIC_KEY} 사용")
     else:
         # 일반 API 키 검증
-        if not x_api_key:
-            raise HTTPException(status_code=401, detail="API key required")
-        
+        from database import verify_api_key
         api_key_info = verify_api_key(x_api_key)
         if not api_key_info:
             raise HTTPException(status_code=401, detail="Invalid API key")
         
-        # 도메인 검증 (Origin 헤더 확인)
-        # Note: Origin 헤더는 FastAPI에서 자동으로 처리되지 않으므로 request.headers에서 직접 가져와야 함
-        # 이 부분은 나중에 구현하거나 프록시에서 처리하도록 할 수 있습니다
+        # 비밀 키 검증
+        if not x_secret_key:
+            raise HTTPException(status_code=401, detail="Secret key required")
         
-        # API 키 사용량 업데이트
+        # 공개 키와 비밀 키 쌍 검증
+        from api.routers.verify_captcha import verify_api_key_with_secret
+        api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
+        if not api_key_info:
+            raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+    
+    # 도메인 검증 (Origin 헤더 확인)
+    # Note: Origin 헤더는 FastAPI에서 자동으로 처리되지 않으므로 request.headers에서 직접 가져와야 함
+    # 이 부분은 나중에 구현하거나 프록시에서 처리하도록 할 수 있습니다
+    
+    # API 키 사용량 업데이트 (데모 모드가 아닌 경우에만)
+    if not api_key_info.get('is_demo', False):
         update_api_key_usage(api_key_info['api_key_id'])
+    else:
+        print("🎯 데모 모드: API 키 사용량 업데이트 건너뜀")
     
     behavior_data = request.behavior_data
     correlation_id = ObjectId()
@@ -186,14 +262,15 @@ def next_captcha(request: CaptchaRequest, x_api_key: Optional[str] = Header(None
     #     next_captcha_value = "handwritingcaptcha"
     #     captcha_type = "handwriting"
 
-    captcha_type = "image"
-    next_captcha_value = "imagecaptcha"
+    captcha_type = "handwriting"
+    next_captcha_value = "handwritingcaptcha"
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
         "confidence_score": confidence_score,
         "captcha_type": captcha_type,
         "next_captcha": next_captcha_value,
+        "captcha_token": captcha_token,
         "behavior_data_received": len(str(behavior_data)) > 0,
         "ml_service_used": ML_SERVICE_USED,
         "is_bot_detected": is_bot if ML_SERVICE_USED else None

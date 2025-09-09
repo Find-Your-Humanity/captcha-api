@@ -61,10 +61,10 @@ def verify_api_key(api_key: str) -> dict:
                 cursor.execute("""
                     SELECT ak.id, ak.user_id, ak.name, ak.is_active, ak.rate_limit_per_minute, 
                            ak.rate_limit_per_day, ak.usage_count, ak.last_used_at, ak.allowed_origins,
-                           u.email, us.plan_id, p.name as plan_name, p.max_requests_per_month
+                           u.email, us.plan_id, p.name as plan_name
                     FROM api_keys ak
                     JOIN users u ON ak.user_id = u.id
-                    LEFT JOIN user_subscriptions us ON u.id = us.user_id AND us.is_active = 1
+                    LEFT JOIN user_subscriptions us ON u.id = us.user_id
                     LEFT JOIN plans p ON us.plan_id = p.id
                     WHERE ak.key_id = %s AND ak.is_active = 1
                 """, (api_key,))
@@ -85,8 +85,7 @@ def verify_api_key(api_key: str) -> dict:
                     'allowed_origins': result[8],
                     'user_email': result[9],
                     'plan_id': result[10],
-                    'plan_name': result[11],
-                    'max_requests_per_month': result[12]
+                    'plan_name': result[11]
                 }
     except Exception as e:
         print(f"API 키 검증 오류: {e}")
