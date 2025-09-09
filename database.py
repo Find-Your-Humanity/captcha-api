@@ -64,7 +64,7 @@ def verify_api_key(api_key: str) -> dict:
                            u.email, us.plan_id, p.name as plan_name
                     FROM api_keys ak
                     JOIN users u ON ak.user_id = u.id
-                    LEFT JOIN user_subscriptions us ON u.id = us.user_id AND us.is_active = 1
+                    LEFT JOIN user_subscriptions us ON u.id = us.user_id
                     LEFT JOIN plans p ON us.plan_id = p.id
                     WHERE ak.key_id = %s AND ak.is_active = 1
                 """, (api_key,))

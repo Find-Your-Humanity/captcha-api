@@ -36,8 +36,7 @@ def verify_api_key_auto_secret(api_key: str) -> Optional[Dict[str, Any]]:
                            ak.is_demo, ak.secret_key,
                            u.email, us.plan_id, p.name as plan_name,                     FROM api_keys ak
                     LEFT JOIN users u ON ak.user_id = u.id
-                    LEFT JOIN user_subscriptions us ON u.id = us.user_id AND us.is_active = 1
-                    LEFT JOIN plans p ON us.plan_id = p.id
+                    LEFT JOIN user_subscriptions us ON u.id = us.user_id AND                     LEFT JOIN plans p ON us.plan_id = p.id
                     WHERE ak.key_id = %s AND ak.is_active = 1
                 """, (api_key,))
                 
@@ -96,8 +95,7 @@ def verify_api_key_with_secret(api_key: str, secret_key: str) -> Optional[Dict[s
                            ak.is_demo, ak.secret_key,
                            u.email, us.plan_id, p.name as plan_name,                     FROM api_keys ak
                     LEFT JOIN users u ON ak.user_id = u.id
-                    LEFT JOIN user_subscriptions us ON u.id = us.user_id AND us.is_active = 1
-                    LEFT JOIN plans p ON us.plan_id = p.id
+                    LEFT JOIN user_subscriptions us ON u.id = us.user_id AND                     LEFT JOIN plans p ON us.plan_id = p.id
                     WHERE ak.key_id = %s AND ak.is_active = 1
                 """, (api_key,))
                 
