@@ -50,6 +50,26 @@ def test_connection():
         print(f"데이터베이스 연결 테스트 실패: {e}")
         return False
 
+def initialize_captcha_type_columns():
+    """
+    api_keys 테이블에 캡차 타입별 사용량 컬럼을 추가합니다.
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # 캡차 타입별 사용량 컬럼 추가
+                cursor.execute("""
+                    ALTER TABLE api_keys 
+                    ADD COLUMN IF NOT EXISTS usage_count_image INT DEFAULT 0 COMMENT '이미지 캡차 사용량',
+                    ADD COLUMN IF NOT EXISTS usage_count_handwriting INT DEFAULT 0 COMMENT '손글씨 캡차 사용량',
+                    ADD COLUMN IF NOT EXISTS usage_count_abstract INT DEFAULT 0 COMMENT '추상 캡차 사용량'
+                """)
+                print("✅ 캡차 타입별 사용량 컬럼 초기화 완료")
+                return True
+    except Exception as e:
+        print(f"캡차 타입별 사용량 컬럼 초기화 오류: {e}")
+        return False
+
 def verify_api_key(api_key: str) -> dict:
     """
     API 키 검증 함수
@@ -126,19 +146,47 @@ def verify_domain_access(api_key_info: dict, request_domain: str) -> bool:
         print(f"도메인 검증 오류: {e}")
         return True  # 오류 시 허용
 
-def update_api_key_usage(api_key_id: int):
+def update_api_key_usage(api_key_id: int, captcha_type: str = None):
     """
-    API 키 사용량 업데이트
+    API 키 사용량 업데이트 (캡차 타입별)
+    
+    Args:
+        api_key_id: API 키 ID
+        captcha_type: 캡차 타입 ('image', 'handwriting', 'abstract')
     """
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
+                # 기본 사용량 증가
                 cursor.execute("""
                     UPDATE api_keys 
                     SET usage_count = usage_count + 1, 
                         last_used_at = NOW() 
                     WHERE id = %s
                 """, (api_key_id,))
+                
+                # 캡차 타입별 사용량 증가
+                if captcha_type:
+                    if captcha_type == 'image':
+                        cursor.execute("""
+                            UPDATE api_keys 
+                            SET usage_count_image = usage_count_image + 1 
+                            WHERE id = %s
+                        """, (api_key_id,))
+                    elif captcha_type == 'handwriting':
+                        cursor.execute("""
+                            UPDATE api_keys 
+                            SET usage_count_handwriting = usage_count_handwriting + 1 
+                            WHERE id = %s
+                        """, (api_key_id,))
+                    elif captcha_type == 'abstract':
+                        cursor.execute("""
+                            UPDATE api_keys 
+                            SET usage_count_abstract = usage_count_abstract + 1 
+                            WHERE id = %s
+                        """, (api_key_id,))
+                        
+                print(f"✅ API 키 사용량 업데이트: ID={api_key_id}, 타입={captcha_type}")
     except Exception as e:
         print(f"API 키 사용량 업데이트 오류: {e}")
 

@@ -31,12 +31,15 @@ def verify_api_key_auto_secret(api_key: str) -> Optional[Dict[str, Any]]:
             with conn.cursor() as cursor:
                 # API 키 조회
                 cursor.execute("""
-                    SELECT ak.id, ak.user_id, ak.name, ak.is_active, ak.rate_limit_per_minute, 
-                           ak.rate_limit_per_day, ak.usage_count, ak.last_used_at, ak.allowed_origins,
-                           ak.is_demo, ak.secret_key,
-                           u.email, us.plan_id, p.name as plan_name,                     FROM api_keys ak
+                    SELECT 
+                        ak.id, ak.user_id, ak.name, ak.is_active, ak.rate_limit_per_minute,
+                        ak.rate_limit_per_day, ak.usage_count, ak.last_used_at, ak.allowed_origins,
+                        ak.is_demo, ak.secret_key,
+                        u.email, us.plan_id, p.name AS plan_name
+                    FROM api_keys ak
                     LEFT JOIN users u ON ak.user_id = u.id
-                    LEFT JOIN user_subscriptions us ON u.id = us.user_id AND                     LEFT JOIN plans p ON us.plan_id = p.id
+                    LEFT JOIN user_subscriptions us ON u.id = us.user_id
+                    LEFT JOIN plans p ON us.plan_id = p.id
                     WHERE ak.key_id = %s AND ak.is_active = 1
                 """, (api_key,))
                 
@@ -90,12 +93,15 @@ def verify_api_key_with_secret(api_key: str, secret_key: str) -> Optional[Dict[s
             with conn.cursor() as cursor:
                 # 먼저 일반 API 키 조회
                 cursor.execute("""
-                    SELECT ak.id, ak.user_id, ak.name, ak.is_active, ak.rate_limit_per_minute, 
-                           ak.rate_limit_per_day, ak.usage_count, ak.last_used_at, ak.allowed_origins,
-                           ak.is_demo, ak.secret_key,
-                           u.email, us.plan_id, p.name as plan_name,                     FROM api_keys ak
+                    SELECT 
+                        ak.id, ak.user_id, ak.name, ak.is_active, ak.rate_limit_per_minute,
+                        ak.rate_limit_per_day, ak.usage_count, ak.last_used_at, ak.allowed_origins,
+                        ak.is_demo, ak.secret_key,
+                        u.email, us.plan_id, p.name AS plan_name
+                    FROM api_keys ak
                     LEFT JOIN users u ON ak.user_id = u.id
-                    LEFT JOIN user_subscriptions us ON u.id = us.user_id AND                     LEFT JOIN plans p ON us.plan_id = p.id
+                    LEFT JOIN user_subscriptions us ON u.id = us.user_id
+                    LEFT JOIN plans p ON us.plan_id = p.id
                     WHERE ak.key_id = %s AND ak.is_active = 1
                 """, (api_key,))
                 
@@ -157,17 +163,17 @@ def verify_captcha(
     # 도메인 검증 (Origin 헤더 확인)
     # TODO: Origin 헤더 검증 로직 추가
     
-    # API 키 사용량 업데이트
-    update_api_key_usage(api_key_info['api_key_id'])
-    
     # 캡차 토큰 검증 로직
     if not request.captcha_token or not request.captcha_response:
         raise HTTPException(status_code=400, detail="Invalid captcha token or response")
     
-    # 토큰 검증
-    token_valid = verify_captcha_token(request.captcha_token, x_api_key)
+    # 토큰 검증 및 캡차 타입 가져오기
+    token_valid, captcha_type = verify_captcha_token(request.captcha_token, x_api_key)
     if not token_valid:
         raise HTTPException(status_code=400, detail="Invalid or expired captcha token")
+    
+    # API 키 사용량 업데이트 (캡차 타입별)
+    update_api_key_usage(api_key_info['api_key_id'], captcha_type)
     
     # 성공 응답
     response_time = int((datetime.now() - start_time).total_seconds() * 1000)

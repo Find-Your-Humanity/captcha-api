@@ -47,15 +47,18 @@ def generate_captcha_token(api_key: str, captcha_type: str, user_id: int) -> str
         return token  # 오류가 있어도 토큰은 반환
 
 
-def verify_captcha_token(token: str, api_key: str) -> bool:
+def verify_captcha_token(token: str, api_key: str) -> tuple[bool, str]:
     """
-    캡차 토큰을 검증합니다.
+    캡차 토큰을 검증하고 캡차 타입을 반환합니다.
+    
+    Returns:
+        tuple: (is_valid, captcha_type)
     """
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute("""
-                    SELECT id FROM captcha_tokens 
+                    SELECT id, captcha_type FROM captcha_tokens 
                     WHERE token_id = %s AND api_key_id = %s AND expires_at > NOW() AND is_used = 0
                 """, (token, api_key))
                 
@@ -66,11 +69,11 @@ def verify_captcha_token(token: str, api_key: str) -> bool:
                         UPDATE captcha_tokens SET is_used = 1, used_at = NOW() 
                         WHERE id = %s
                     """, (result[0],))
-                    return True
-                return False
+                    return True, result[1]  # (is_valid, captcha_type)
+                return False, None
     except Exception as e:
         print(f"캡차 토큰 검증 오류: {e}")
-        return False
+        return False, None
 
 
 _mongo_client_for_behavior = None
@@ -141,21 +144,12 @@ def next_captcha(
         }
         print(f"🎯 데모 모드: {DEMO_PUBLIC_KEY} 사용")
     else:
-        # 일반 API 키 검증
+        # 일반 API 키 검증 (챌린지 발급 단계에서는 공개 키만 확인)
         from database import verify_api_key
         api_key_info = verify_api_key(x_api_key)
         if not api_key_info:
             raise HTTPException(status_code=401, detail="Invalid API key")
-        
-        # 비밀 키 검증
-        if not x_secret_key:
-            raise HTTPException(status_code=401, detail="Secret key required")
-        
-        # 공개 키와 비밀 키 쌍 검증
-        from api.routers.verify_captcha import verify_api_key_with_secret
-        api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
-        if not api_key_info:
-            raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+        # 비밀 키 검증은 응답 검증 단계(/api/verify-captcha)에서 수행
     
     # 도메인 검증 (Origin 헤더 확인)
     # Note: Origin 헤더는 FastAPI에서 자동으로 처리되지 않으므로 request.headers에서 직접 가져와야 함
@@ -264,6 +258,25 @@ def next_captcha(
 
     # captcha_type = "handwriting"
     # next_captcha_value = "handwritingcaptcha"
+
+    # 안전 기본값 초기화 (예외 상황 방지)
+    captcha_token: Optional[str] = None
+
+    try:
+        if not api_key_info.get('is_demo', False):
+            # 일반 키: DB 저장 토큰 생성
+            captcha_token = generate_captcha_token(x_api_key, captcha_type, api_key_info['user_id'])
+        else:
+            # 데모 키: 메모리 토큰 생성(비DB)
+            captcha_token = f"demo_token_{secrets.token_urlsafe(16)}"
+            print("🎯 데모 모드: 데이터베이스 토큰 저장 건너뜀")
+    except Exception as e:
+        print(f"⚠️ 토큰 생성 중 예외 발생: {e}")
+
+    # 최종 안전장치: 어떤 경우에도 토큰이 비어있지 않도록
+    if not captcha_token:
+        captcha_token = f"fallback_token_{secrets.token_urlsafe(16)}"
+        print("⚠️ 토큰 기본값(fallback) 사용")
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
