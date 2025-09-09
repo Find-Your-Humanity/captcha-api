@@ -168,7 +168,7 @@ def verify_captcha(
         raise HTTPException(status_code=400, detail="Invalid captcha token or response")
     
     # 토큰 검증 및 캡차 타입 가져오기
-    token_valid, captcha_type = verify_captcha_token(request.captcha_token, x_api_key)
+    token_valid, captcha_type = verify_captcha_token(request.captcha_token, api_key_info['api_key_id'])
     if not token_valid:
         raise HTTPException(status_code=400, detail="Invalid or expired captcha token")
     
