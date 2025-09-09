@@ -265,8 +265,13 @@ def next_captcha(
     captcha_type = "handwriting"
     next_captcha_value = "handwritingcaptcha"
     
-    # 캡차 토큰 생성
-    captcha_token = generate_captcha_token(x_api_key, captcha_type, api_key_info['user_id'])
+    # 캡차 토큰 생성 (데모 모드가 아닌 경우에만)
+    if not api_key_info.get('is_demo', False):
+        captcha_token = generate_captcha_token(x_api_key, captcha_type, api_key_info['user_id'])
+    else:
+        # 데모 모드에서는 간단한 토큰 생성
+        captcha_token = f"demo_token_{secrets.token_urlsafe(16)}"
+        print("🎯 데모 모드: 데이터베이스 토큰 저장 건너뜀")
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
