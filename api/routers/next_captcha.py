@@ -66,20 +66,30 @@ def _save_behavior_to_mongo(doc: Dict[str, Any]) -> None:
 
 @router.post("/api/next-captcha")
 def next_captcha(request: CaptchaRequest, x_api_key: Optional[str] = Header(None)):
-    # API 키 검증
-    if not x_api_key:
-        raise HTTPException(status_code=401, detail="API key required")
+    # 데모 모드: 특정 데모 키들은 검증 우회
+    DEMO_KEYS = [
+        'rc_demo_homepage_test_key',
+        'rc_live_f49a055d62283fd02e8203ccaba70fc2'
+    ]
     
-    api_key_info = verify_api_key(x_api_key)
-    if not api_key_info:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-    
-    # 도메인 검증 (Origin 헤더 확인)
-    # Note: Origin 헤더는 FastAPI에서 자동으로 처리되지 않으므로 request.headers에서 직접 가져와야 함
-    # 이 부분은 나중에 구현하거나 프록시에서 처리하도록 할 수 있습니다
-    
-    # API 키 사용량 업데이트
-    update_api_key_usage(api_key_info['api_key_id'])
+    if x_api_key in DEMO_KEYS:
+        print(f"🎭 데모 모드: {x_api_key} 키로 캡차 요청 처리")
+        # 데모 모드에서는 API 키 검증을 우회하고 바로 캡차 처리
+    else:
+        # 일반 API 키 검증
+        if not x_api_key:
+            raise HTTPException(status_code=401, detail="API key required")
+        
+        api_key_info = verify_api_key(x_api_key)
+        if not api_key_info:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        
+        # 도메인 검증 (Origin 헤더 확인)
+        # Note: Origin 헤더는 FastAPI에서 자동으로 처리되지 않으므로 request.headers에서 직접 가져와야 함
+        # 이 부분은 나중에 구현하거나 프록시에서 처리하도록 할 수 있습니다
+        
+        # API 키 사용량 업데이트
+        update_api_key_usage(api_key_info['api_key_id'])
     
     behavior_data = request.behavior_data
     correlation_id = ObjectId()
