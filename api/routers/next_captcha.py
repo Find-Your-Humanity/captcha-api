@@ -125,8 +125,8 @@ def next_captcha(
         raise HTTPException(status_code=401, detail="API key required")
     
     # 데모 키 하드코딩 (홈페이지 데모용)
-    DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
-    DEMO_SECRET_KEY = 'rc_sk_273d06a8a03799f7637083b50f4f08f2aa29ffb56fd1bfe64833850b4b16810c'
+    DEMO_PUBLIC_KEY = 'rc_live_de68c19f90f0f508f06cb2e19fe22ef8'
+    DEMO_SECRET_KEY = 'rc_sk_156266b74a311cf9b963d6c9c717c2f910508dd99d49c234a24c29047f89d457'
     
     # 데모 키인 경우 자동으로 비밀 키 설정 (데이터베이스 검증 우회)
     if x_api_key == DEMO_PUBLIC_KEY:
