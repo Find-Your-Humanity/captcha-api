@@ -128,3 +128,92 @@ def update_api_key_usage(api_key_id: int):
                 """, (api_key_id,))
     except Exception as e:
         print(f"API 키 사용량 업데이트 오류: {e}")
+
+def log_request(user_id: int, api_key: str, path: str, api_type: str, method: str, status_code: int, response_time: int):
+    """
+    API 요청 로그 저장
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO api_request_logs 
+                    (user_id, api_key, path, api_type, method, status_code, response_time, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                """, (user_id, api_key, path, api_type, method, status_code, response_time))
+    except Exception as e:
+        print(f"API 요청 로그 저장 오류: {e}")
+
+def update_daily_api_stats(api_type: str, is_success: bool, response_time: int):
+    """
+    일별 API 통계 업데이트 (전역)
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # 일별 통계 테이블이 없으면 생성
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS daily_api_stats (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        date DATE NOT NULL,
+                        api_type VARCHAR(50) NOT NULL,
+                        total_requests INT DEFAULT 0,
+                        successful_requests INT DEFAULT 0,
+                        failed_requests INT DEFAULT 0,
+                        avg_response_time DECIMAL(10,2) DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY unique_date_type (date, api_type)
+                    )
+                """)
+                
+                # 통계 업데이트
+                cursor.execute("""
+                    INSERT INTO daily_api_stats (date, api_type, total_requests, successful_requests, failed_requests, avg_response_time)
+                    VALUES (CURDATE(), %s, 1, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        total_requests = total_requests + 1,
+                        successful_requests = successful_requests + %s,
+                        failed_requests = failed_requests + %s,
+                        avg_response_time = (avg_response_time * (total_requests - 1) + %s) / total_requests
+                """, (api_type, 1 if is_success else 0, 0 if is_success else 1, response_time, 1 if is_success else 0, 0 if is_success else 1, response_time))
+    except Exception as e:
+        print(f"일별 API 통계 업데이트 오류: {e}")
+
+def update_daily_api_stats_by_key(user_id: int, api_key: str, api_type: str, response_time: int, is_success: bool):
+    """
+    사용자/키/타입 단위 일별 집계 업데이트
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # 사용자별 일별 통계 테이블이 없으면 생성
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS daily_user_api_stats (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        date DATE NOT NULL,
+                        user_id INT NOT NULL,
+                        api_key VARCHAR(255) NOT NULL,
+                        api_type VARCHAR(50) NOT NULL,
+                        total_requests INT DEFAULT 0,
+                        successful_requests INT DEFAULT 0,
+                        failed_requests INT DEFAULT 0,
+                        avg_response_time DECIMAL(10,2) DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY unique_date_user_key_type (date, user_id, api_key, api_type)
+                    )
+                """)
+                
+                # 통계 업데이트
+                cursor.execute("""
+                    INSERT INTO daily_user_api_stats (date, user_id, api_key, api_type, total_requests, successful_requests, failed_requests, avg_response_time)
+                    VALUES (CURDATE(), %s, %s, %s, 1, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        total_requests = total_requests + 1,
+                        successful_requests = successful_requests + %s,
+                        failed_requests = failed_requests + %s,
+                        avg_response_time = (avg_response_time * (total_requests - 1) + %s) / total_requests
+                """, (user_id, api_key, api_type, 1 if is_success else 0, 0 if is_success else 1, response_time, 1 if is_success else 0, 0 if is_success else 1, response_time))
+    except Exception as e:
+        print(f"사용자별 일별 API 통계 업데이트 오류: {e}")
