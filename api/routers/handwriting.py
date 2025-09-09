@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from typing import Any, Dict, List, Optional
-import base64, uuid, time
+import base64, uuid, time, json
 from datetime import datetime
 from pathlib import Path
 import httpx
@@ -73,13 +73,31 @@ async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
             )
         return {"success": False, "message": "OCR_API_URL is not configured on server."}
 
-    def _call_ocr_multipart():
+    def _call_ocr_multipart(lexicon_list: Optional[List[str]] = None):
         field = OCR_IMAGE_FIELD or "file"
         files = {field: ("handwriting.png", image_bytes, "image/png")}
-        return httpx.post(OCR_API_URL, files=files, timeout=20.0)
+        data = None
+        try:
+            if lexicon_list:
+                data = {"lexicon": json.dumps(list(lexicon_list))}
+        except Exception:
+            data = None
+        return httpx.post(OCR_API_URL, data=data, files=files, timeout=20.0)
+
+    # 소형 lexicon 구성: challenge_id를 통해 Redis에서 target_class를 조회하여 전달(가능 시)
+    lexicon_list: Optional[List[str]] = None
+    try:
+        if get_redis() and (req.challenge_id or ""):
+            _doc = redis_get_json(rkey("handwriting", str(req.challenge_id)))
+            if isinstance(_doc, dict):
+                _t = str((_doc.get("target_class") or "").strip())
+                if _t:
+                    lexicon_list = [_t]
+    except Exception:
+        lexicon_list = None
 
     try:
-        resp = _call_ocr_multipart()
+        resp = _call_ocr_multipart(lexicon_list=lexicon_list)
         resp.raise_for_status()
         ocr_json = resp.json()
     except Exception as e:

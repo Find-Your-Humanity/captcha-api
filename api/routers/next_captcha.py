@@ -223,12 +223,11 @@ def next_captcha(request: CaptchaRequest, x_api_key: Optional[str] = Header(None
     #     next_captcha_value = "handwritingcaptcha"
     #     captcha_type = "handwriting"
 
-    captcha_type = "image"
-    next_captcha_value = "imagecaptcha"
+    captcha_type = "handwriting"
+    next_captcha_value = "handwritingcaptcha"
     
     # 캡차 토큰 생성
     captcha_token = generate_captcha_token(x_api_key, captcha_type)
-    
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
