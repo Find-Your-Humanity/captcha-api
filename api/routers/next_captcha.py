@@ -286,12 +286,5 @@ def next_captcha(
     except Exception:
         pass
     return payload
-    
-    except Exception as e:
-        print(f"❌ [/api/next-captcha] 오류 발생: {str(e)}")
-        print(f"❌ 오류 타입: {type(e).__name__}")
-        import traceback
-        print(f"❌ 스택 트레이스: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
