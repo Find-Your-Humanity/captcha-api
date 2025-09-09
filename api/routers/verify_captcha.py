@@ -34,8 +34,7 @@ def verify_api_key_auto_secret(api_key: str) -> Optional[Dict[str, Any]]:
                     SELECT ak.id, ak.user_id, ak.name, ak.is_active, ak.rate_limit_per_minute, 
                            ak.rate_limit_per_day, ak.usage_count, ak.last_used_at, ak.allowed_origins,
                            ak.is_demo, ak.secret_key,
-                           u.email, us.plan_id, p.name as plan_name, p.max_requests_per_month
-                    FROM api_keys ak
+                           u.email, us.plan_id, p.name as plan_name,                     FROM api_keys ak
                     LEFT JOIN users u ON ak.user_id = u.id
                     LEFT JOIN user_subscriptions us ON u.id = us.user_id AND us.is_active = 1
                     LEFT JOIN plans p ON us.plan_id = p.id
@@ -76,7 +75,6 @@ def verify_api_key_auto_secret(api_key: str) -> Optional[Dict[str, Any]]:
                     'user_email': result[11],
                     'plan_id': result[12],
                     'plan_name': result[13],
-                    'max_requests_per_month': result[14]
                 }
     except Exception as e:
         print(f"API 키 자동 검증 오류: {e}")
@@ -96,8 +94,7 @@ def verify_api_key_with_secret(api_key: str, secret_key: str) -> Optional[Dict[s
                     SELECT ak.id, ak.user_id, ak.name, ak.is_active, ak.rate_limit_per_minute, 
                            ak.rate_limit_per_day, ak.usage_count, ak.last_used_at, ak.allowed_origins,
                            ak.is_demo, ak.secret_key,
-                           u.email, us.plan_id, p.name as plan_name, p.max_requests_per_month
-                    FROM api_keys ak
+                           u.email, us.plan_id, p.name as plan_name,                     FROM api_keys ak
                     LEFT JOIN users u ON ak.user_id = u.id
                     LEFT JOIN user_subscriptions us ON u.id = us.user_id AND us.is_active = 1
                     LEFT JOIN plans p ON us.plan_id = p.id
@@ -133,7 +130,6 @@ def verify_api_key_with_secret(api_key: str, secret_key: str) -> Optional[Dict[s
                     'user_email': result[11],
                     'plan_id': result[12],
                     'plan_name': result[13],
-                    'max_requests_per_month': result[14]
                 }
     except Exception as e:
         print(f"API 키/비밀 키 검증 오류: {e}")
