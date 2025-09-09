@@ -27,6 +27,15 @@ def get_db_connection():
         if connection:
             connection.close()
 
+@contextmanager
+def get_db_cursor():
+    """
+    기존 코드와의 호환성을 위한 데이터베이스 커서 컨텍스트 매니저
+    """
+    with get_db_connection() as conn:
+        with conn.cursor(pymysql.cursors.DictCursor) as cursor:
+            yield cursor
+
 def verify_api_key(api_key: str) -> dict:
     """
     API 키 검증 함수
