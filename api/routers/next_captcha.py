@@ -27,7 +27,7 @@ from database import verify_api_key, verify_domain_access, update_api_key_usage,
 router = APIRouter()
 
 
-def generate_captcha_token(api_key: str, captcha_type: str) -> str:
+def generate_captcha_token(api_key: str, captcha_type: str, user_id: int) -> str:
     """
     캡차 토큰을 생성하고 데이터베이스에 저장합니다.
     """
@@ -38,9 +38,9 @@ def generate_captcha_token(api_key: str, captcha_type: str) -> str:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute("""
-                    INSERT INTO captcha_tokens (token, api_key, captcha_type, expires_at, created_at)
-                    VALUES (%s, %s, %s, %s, NOW())
-                """, (token, api_key, captcha_type, expires_at))
+                    INSERT INTO captcha_tokens (token_id, api_key_id, user_id, captcha_type, expires_at, created_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW())
+                """, (token, api_key, user_id, captcha_type, expires_at))
         return token
     except Exception as e:
         print(f"캡차 토큰 생성 오류: {e}")
@@ -56,7 +56,7 @@ def verify_captcha_token(token: str, api_key: str) -> bool:
             with conn.cursor() as cursor:
                 cursor.execute("""
                     SELECT id FROM captcha_tokens 
-                    WHERE token = %s AND api_key = %s AND expires_at > NOW() AND is_used = 0
+                    WHERE token_id = %s AND api_key_id = %s AND expires_at > NOW() AND is_used = 0
                 """, (token, api_key))
                 
                 result = cursor.fetchone()
@@ -227,7 +227,7 @@ def next_captcha(request: CaptchaRequest, x_api_key: Optional[str] = Header(None
     next_captcha_value = "handwritingcaptcha"
     
     # 캡차 토큰 생성
-    captcha_token = generate_captcha_token(x_api_key, captcha_type)
+    captcha_token = generate_captcha_token(x_api_key, captcha_type, api_key_info['user_id'])
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
