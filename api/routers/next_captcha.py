@@ -125,8 +125,8 @@ def next_captcha(
         raise HTTPException(status_code=401, detail="API key required")
     
     # 데모 키 하드코딩 (홈페이지 데모용)
-    DEMO_PUBLIC_KEY = 'rc_live_de68c19f90f0f508f06cb2e19fe22ef8'
-    DEMO_SECRET_KEY = 'rc_sk_156266b74a311cf9b963d6c9c717c2f910508dd99d49c234a24c29047f89d457'
+    DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
+    DEMO_SECRET_KEY = 'rc_sk_273d06a8a03799f7637083b50f4f08f2aa29ffb56fd1bfe64833850b4b16810c'
     
     # 데모 키인 경우 자동으로 비밀 키 설정 (데이터베이스 검증 우회)
     if x_api_key == DEMO_PUBLIC_KEY:
@@ -141,21 +141,12 @@ def next_captcha(
         }
         print(f"🎯 데모 모드: {DEMO_PUBLIC_KEY} 사용")
     else:
-        # 일반 API 키 검증
+        # 일반 API 키 검증 (챌린지 발급 단계에서는 공개 키만 확인)
         from database import verify_api_key
         api_key_info = verify_api_key(x_api_key)
         if not api_key_info:
             raise HTTPException(status_code=401, detail="Invalid API key")
-        
-        # 비밀 키 검증
-        if not x_secret_key:
-            raise HTTPException(status_code=401, detail="Secret key required")
-        
-        # 공개 키와 비밀 키 쌍 검증
-        from api.routers.verify_captcha import verify_api_key_with_secret
-        api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
-        if not api_key_info:
-            raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+        # 비밀 키 검증은 응답 검증 단계(/api/verify-captcha)에서 수행
     
     # 도메인 검증 (Origin 헤더 확인)
     # Note: Origin 헤더는 FastAPI에서 자동으로 처리되지 않으므로 request.headers에서 직접 가져와야 함
