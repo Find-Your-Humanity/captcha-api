@@ -117,9 +117,13 @@ def next_captcha(
     x_api_key: Optional[str] = Header(None),
     x_secret_key: Optional[str] = Header(None)
 ):
-    # API 키 검증
-    if not x_api_key:
-        raise HTTPException(status_code=401, detail="API key required")
+    try:
+        print(f"🚀 [/api/next-captcha] 요청 시작 - API Key: {x_api_key[:20] if x_api_key else 'None'}...")
+        
+        # API 키 검증
+        if not x_api_key:
+            print("❌ API 키 없음")
+            raise HTTPException(status_code=401, detail="API key required")
     
     # 데모 키 하드코딩 (홈페이지 데모용)
     DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
@@ -283,5 +287,12 @@ def next_captcha(
     except Exception:
         pass
     return payload
+    
+    except Exception as e:
+        print(f"❌ [/api/next-captcha] 오류 발생: {str(e)}")
+        print(f"❌ 오류 타입: {type(e).__name__}")
+        import traceback
+        print(f"❌ 스택 트레이스: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
