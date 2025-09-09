@@ -264,6 +264,25 @@ def next_captcha(
 
     captcha_type = "handwriting"
     next_captcha_value = "handwritingcaptcha"
+
+    # 안전 기본값 초기화 (예외 상황 방지)
+    captcha_token: Optional[str] = None
+
+    try:
+        if not api_key_info.get('is_demo', False):
+            # 일반 키: DB 저장 토큰 생성
+            captcha_token = generate_captcha_token(x_api_key, captcha_type, api_key_info['user_id'])
+        else:
+            # 데모 키: 메모리 토큰 생성(비DB)
+            captcha_token = f"demo_token_{secrets.token_urlsafe(16)}"
+            print("🎯 데모 모드: 데이터베이스 토큰 저장 건너뜀")
+    except Exception as e:
+        print(f"⚠️ 토큰 생성 중 예외 발생: {e}")
+
+    # 최종 안전장치: 어떤 경우에도 토큰이 비어있지 않도록
+    if not captcha_token:
+        captcha_token = f"fallback_token_{secrets.token_urlsafe(16)}"
+        print("⚠️ 토큰 기본값(fallback) 사용")
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
