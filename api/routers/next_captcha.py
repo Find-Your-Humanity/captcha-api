@@ -112,14 +112,23 @@ def _save_behavior_to_mongo(doc: Dict[str, Any]) -> None:
 
 
 @router.post("/api/next-captcha")
-def next_captcha(request: CaptchaRequest, x_api_key: Optional[str] = Header(None)):
-    # API 키 검증 (실제 사용자용)
+def next_captcha(
+    request: CaptchaRequest, 
+    x_api_key: Optional[str] = Header(None),
+    x_secret_key: Optional[str] = Header(None)
+):
+    # API 키와 비밀 키 검증 (실제 사용자용)
     if not x_api_key:
         raise HTTPException(status_code=401, detail="API key required")
     
-    api_key_info = verify_api_key(x_api_key)
+    if not x_secret_key:
+        raise HTTPException(status_code=401, detail="Secret key required")
+    
+    # 공개 키와 비밀 키 쌍 검증
+    from api.routers.verify_captcha import verify_api_key_with_secret
+    api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
     if not api_key_info:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        raise HTTPException(status_code=401, detail="Invalid API key or secret key")
     
     # 도메인 검증 (Origin 헤더 확인)
     # Note: Origin 헤더는 FastAPI에서 자동으로 처리되지 않으므로 request.headers에서 직접 가져와야 함
