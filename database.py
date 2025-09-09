@@ -1,210 +1,233 @@
 import pymysql
-import os
-from typing import Optional, Dict, Any
 from contextlib import contextmanager
-import logging
+from config.settings import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
 
-logger = logging.getLogger(__name__)
-
+@contextmanager
 def get_db_connection():
-    """MySQL 데이터베이스 연결을 반환합니다."""
+    """
+    데이터베이스 연결을 위한 컨텍스트 매니저
+    """
+    connection = None
     try:
         connection = pymysql.connect(
-            host=os.getenv('DB_HOST', 'localhost'),
-            port=int(os.getenv('DB_PORT', 3306)),
-            user=os.getenv('DB_USER', 'root'),
-            password=os.getenv('DB_PASSWORD', ''),
-            database=os.getenv('DB_NAME', 'captcha'),
+            host=DB_HOST,
+            port=DB_PORT,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
             charset='utf8mb4',
-            cursorclass=pymysql.cursors.DictCursor,
-            autocommit=False
+            autocommit=True
         )
-        # 세션 타임존을 KST로 고정
-        try:
-            with connection.cursor() as _c:
-                _c.execute("SET time_zone = '+09:00'")
-        except Exception as _tz_err:
-            logger.warning(f"세션 time_zone 설정 실패: {_tz_err}")
-        return connection
+        yield connection
     except Exception as e:
-        logger.error(f"데이터베이스 연결 실패: {e}")
-        raise
+        if connection:
+            connection.rollback()
+        raise e
+    finally:
+        if connection:
+            connection.close()
 
 @contextmanager
 def get_db_cursor():
-    """데이터베이스 커서를 컨텍스트 매니저로 제공합니다."""
-    conn = None
-    cursor = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        yield cursor
-        conn.commit()
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"데이터베이스 작업 실패: {e}")
-        raise
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+    """
+    기존 코드와의 호환성을 위한 데이터베이스 커서 컨텍스트 매니저
+    """
+    with get_db_connection() as conn:
+        with conn.cursor(pymysql.cursors.DictCursor) as cursor:
+            yield cursor
 
-def log_request(
-    user_id: Optional[int] = None,
-    api_key: Optional[str] = None,
-    path: str = "",
-    method: str = "POST",
-    status_code: int = 200,
-    response_time: int = 0,
-    user_agent: str = ""
-) -> bool:
-    """request_logs 테이블에 요청 로그를 기록합니다. (중복 방지)"""
+def test_connection():
+    """
+    데이터베이스 연결 테스트
+    """
     try:
-        with get_db_cursor() as cursor:
-            # 같은 사용자가 1시간 내에 같은 API를 호출했는지 확인
-            check_query = """
-                SELECT id FROM request_logs 
-                WHERE user_id = %s AND path = %s 
-                AND request_time > DATE_SUB(NOW(), INTERVAL 1 HOUR)
-                ORDER BY request_time DESC LIMIT 1
-            """
-            cursor.execute(check_query, (user_id, path))
-            existing_log = cursor.fetchone()
-            
-            if existing_log:
-                # 기존 로그가 있으면 업데이트 (재시도로 간주)
-                update_query = """
-                    UPDATE request_logs 
-                    SET status_code = %s, response_time = %s, request_time = NOW()
-                    WHERE id = %s
-                """
-                cursor.execute(update_query, (status_code, response_time, existing_log['id']))
-                logger.debug(f"요청 로그 업데이트 완료: {path} - {status_code} (재시도)")
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                result = cursor.fetchone()
+                return result is not None
+    except Exception as e:
+        print(f"데이터베이스 연결 테스트 실패: {e}")
+        return False
+
+def verify_api_key(api_key: str) -> dict:
+    """
+    API 키 검증 함수
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # API 키 조회
+                cursor.execute("""
+                    SELECT ak.id, ak.user_id, ak.name, ak.is_active, ak.rate_limit_per_minute, 
+                           ak.rate_limit_per_day, ak.usage_count, ak.last_used_at, ak.allowed_origins,
+                           u.email, us.plan_id, p.name as plan_name, p.max_requests_per_month
+                    FROM api_keys ak
+                    JOIN users u ON ak.user_id = u.id
+                    LEFT JOIN user_subscriptions us ON u.id = us.user_id AND us.is_active = 1
+                    LEFT JOIN plans p ON us.plan_id = p.id
+                    WHERE ak.key_id = %s AND ak.is_active = 1
+                """, (api_key,))
+                
+                result = cursor.fetchone()
+                if not result:
+                    return None
+                
+                return {
+                    'api_key_id': result[0],
+                    'user_id': result[1],
+                    'key_name': result[2],
+                    'is_active': result[3],
+                    'rate_limit_per_minute': result[4],
+                    'rate_limit_per_day': result[5],
+                    'usage_count': result[6],
+                    'last_used_at': result[7],
+                    'allowed_origins': result[8],
+                    'user_email': result[9],
+                    'plan_id': result[10],
+                    'plan_name': result[11],
+                    'max_requests_per_month': result[12]
+                }
+    except Exception as e:
+        print(f"API 키 검증 오류: {e}")
+        return None
+
+def verify_domain_access(api_key_info: dict, request_domain: str) -> bool:
+    """
+    도메인 접근 권한 검증
+    """
+    try:
+        allowed_origins = api_key_info.get('allowed_origins')
+        if not allowed_origins:
+            return True  # 도메인 제한이 없으면 허용
+        
+        if isinstance(allowed_origins, str):
+            import json
+            try:
+                allowed_origins = json.loads(allowed_origins)
+            except (json.JSONDecodeError, TypeError):
                 return True
-            
-            # 새 로그 생성
-            insert_query = """
-                INSERT INTO request_logs 
-                (user_id, path, method, status_code, response_time, user_agent, request_time)
-                VALUES (%s, %s, %s, %s, %s, %s, NOW())
-            """
-            
-            cursor.execute(insert_query, (
-                user_id, path, method, status_code, 
-                response_time, user_agent
-            ))
-            
-            logger.debug(f"요청 로그 저장 완료: {path} - {status_code}")
+        
+        if not allowed_origins or len(allowed_origins) == 0:
             return True
-            
-    except Exception as e:
-        logger.error(f"요청 로그 저장 실패: {e}")
+        
+        for allowed_origin in allowed_origins:
+            if allowed_origin.startswith('*.'):
+                # 와일드카드 도메인 (예: *.example.com)
+                domain_suffix = allowed_origin[2:]
+                if request_domain == domain_suffix or request_domain.endswith('.' + domain_suffix):
+                    return True
+            else:
+                # 정확한 도메인 매치
+                if request_domain == allowed_origin:
+                    return True
+        
         return False
-
-def cleanup_duplicate_logs() -> bool:
-    """중복된 request_logs를 정리합니다."""
-    try:
-        with get_db_cursor() as cursor:
-            # 같은 사용자가 1시간 내에 같은 API를 여러 번 호출한 경우, 가장 최근 것만 남기고 삭제
-            cleanup_query = """
-                DELETE r1 FROM request_logs r1
-                INNER JOIN request_logs r2 
-                WHERE r1.id < r2.id 
-                AND r1.user_id = r2.user_id 
-                AND r1.path = r2.path
-                AND r1.request_time > DATE_SUB(NOW(), INTERVAL 1 HOUR)
-                AND r2.request_time > DATE_SUB(NOW(), INTERVAL 1 HOUR)
-            """
-            cursor.execute(cleanup_query)
-            deleted_count = cursor.rowcount
-            logger.info(f"중복 로그 정리 완료: {deleted_count}개 삭제")
-            return True
-            
     except Exception as e:
-        logger.error(f"중복 로그 정리 실패: {e}")
-        return False
+        print(f"도메인 검증 오류: {e}")
+        return True  # 오류 시 허용
 
-def update_daily_api_stats(api_type: str, is_success: bool, response_time: int) -> bool:
-    """일별 API 통계를 업데이트합니다."""
+def update_api_key_usage(api_key_id: int):
+    """
+    API 키 사용량 업데이트
+    """
     try:
-        with get_db_cursor() as cursor:
-            # API 타입 매핑
-            api_type_mapping = {
-                'handwriting': 'handwriting',
-                'abstract': 'abstract', 
-                'imagecaptcha': 'imagecaptcha'
-            }
-            
-            mapped_api_type = api_type_mapping.get(api_type, api_type)
-            
-            # Python에서 KST 기준 오늘 날짜 계산
-            from datetime import datetime, timezone, timedelta
-            kst_tz = timezone(timedelta(hours=9))
-            kst_today = datetime.now(kst_tz).date()
-            
-            # KST 기준 오늘 날짜의 통계 업데이트 (INSERT ... ON DUPLICATE KEY UPDATE)
-            upsert_query = """
-                INSERT INTO daily_api_stats (date, api_type, total_requests, success_requests, failed_requests, avg_response_time)
-                VALUES (%s, %s, 1, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    total_requests = total_requests + 1,
-                    success_requests = success_requests + %s,
-                    failed_requests = failed_requests + %s,
-                    avg_response_time = (avg_response_time * (total_requests - 1) + %s) / total_requests,
-                    updated_at = NOW()
-            """
-            
-            success_count = 1 if is_success else 0
-            failed_count = 0 if is_success else 1
-            
-            cursor.execute(upsert_query, (
-                kst_today, mapped_api_type, success_count, failed_count, response_time,
-                success_count, failed_count, response_time
-            ))
-            
-            logger.debug(f"일별 API 통계 업데이트 완료: {mapped_api_type} - 성공: {is_success}")
-            return True
-            
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE api_keys 
+                    SET usage_count = usage_count + 1, 
+                        last_used_at = NOW() 
+                    WHERE id = %s
+                """, (api_key_id,))
     except Exception as e:
-        logger.error(f"일별 API 통계 업데이트 실패: {e}")
-        return False
+        print(f"API 키 사용량 업데이트 오류: {e}")
 
-def get_daily_api_stats(start_date: str, end_date: str, api_type: str = None) -> list:
-    """일별 API 통계를 조회합니다."""
+def log_request(user_id: int, api_key: str, path: str, api_type: str, method: str, status_code: int, response_time: int):
+    """
+    API 요청 로그 저장
+    """
     try:
-        with get_db_cursor() as cursor:
-            base_query = """
-                SELECT date, api_type, total_requests, success_requests, failed_requests, avg_response_time
-                FROM daily_api_stats
-                WHERE date BETWEEN %s AND %s
-            """
-            params = [start_date, end_date]
-            
-            if api_type and api_type != 'all':
-                base_query += " AND api_type = %s"
-                params.append(api_type)
-            
-            base_query += " ORDER BY date ASC, api_type ASC"
-            
-            cursor.execute(base_query, params)
-            results = cursor.fetchall()
-            
-            logger.debug(f"일별 API 통계 조회 완료: {len(results)}개 레코드")
-            return results
-            
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO api_request_logs 
+                    (user_id, api_key, path, api_type, method, status_code, response_time, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                """, (user_id, api_key, path, api_type, method, status_code, response_time))
     except Exception as e:
-        logger.error(f"일별 API 통계 조회 실패: {e}")
-        return []
+        print(f"API 요청 로그 저장 오류: {e}")
 
-def test_connection() -> bool:
-    """데이터베이스 연결을 테스트합니다."""
+def update_daily_api_stats(api_type: str, is_success: bool, response_time: int):
+    """
+    일별 API 통계 업데이트 (전역)
+    """
     try:
-        with get_db_cursor() as cursor:
-            cursor.execute("SELECT 1")
-            result = cursor.fetchone()
-            return result is not None
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # 일별 통계 테이블이 없으면 생성
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS daily_api_stats (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        date DATE NOT NULL,
+                        api_type VARCHAR(50) NOT NULL,
+                        total_requests INT DEFAULT 0,
+                        successful_requests INT DEFAULT 0,
+                        failed_requests INT DEFAULT 0,
+                        avg_response_time DECIMAL(10,2) DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY unique_date_type (date, api_type)
+                    )
+                """)
+                
+                # 통계 업데이트
+                cursor.execute("""
+                    INSERT INTO daily_api_stats (date, api_type, total_requests, successful_requests, failed_requests, avg_response_time)
+                    VALUES (CURDATE(), %s, 1, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        total_requests = total_requests + 1,
+                        successful_requests = successful_requests + %s,
+                        failed_requests = failed_requests + %s,
+                        avg_response_time = (avg_response_time * (total_requests - 1) + %s) / total_requests
+                """, (api_type, 1 if is_success else 0, 0 if is_success else 1, response_time, 1 if is_success else 0, 0 if is_success else 1, response_time))
     except Exception as e:
-        logger.error(f"데이터베이스 연결 테스트 실패: {e}")
-        return False
+        print(f"일별 API 통계 업데이트 오류: {e}")
+
+def update_daily_api_stats_by_key(user_id: int, api_key: str, api_type: str, response_time: int, is_success: bool):
+    """
+    사용자/키/타입 단위 일별 집계 업데이트
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # 사용자별 일별 통계 테이블이 없으면 생성
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS daily_user_api_stats (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        date DATE NOT NULL,
+                        user_id INT NOT NULL,
+                        api_key VARCHAR(255) NOT NULL,
+                        api_type VARCHAR(50) NOT NULL,
+                        total_requests INT DEFAULT 0,
+                        successful_requests INT DEFAULT 0,
+                        failed_requests INT DEFAULT 0,
+                        avg_response_time DECIMAL(10,2) DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY unique_date_user_key_type (date, user_id, api_key, api_type)
+                    )
+                """)
+                
+                # 통계 업데이트
+                cursor.execute("""
+                    INSERT INTO daily_user_api_stats (date, user_id, api_key, api_type, total_requests, successful_requests, failed_requests, avg_response_time)
+                    VALUES (CURDATE(), %s, %s, %s, 1, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        total_requests = total_requests + 1,
+                        successful_requests = successful_requests + %s,
+                        failed_requests = failed_requests + %s,
+                        avg_response_time = (avg_response_time * (total_requests - 1) + %s) / total_requests
+                """, (user_id, api_key, api_type, 1 if is_success else 0, 0 if is_success else 1, response_time, 1 if is_success else 0, 0 if is_success else 1, response_time))
+    except Exception as e:
+        print(f"사용자별 일별 API 통계 업데이트 오류: {e}")

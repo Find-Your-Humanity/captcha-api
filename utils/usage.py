@@ -1,7 +1,7 @@
 from typing import Optional
 
 from utils.auth import validate_api_key
-from database import log_request, update_daily_api_stats
+from database import log_request, update_daily_api_stats, update_daily_api_stats_by_key
 
 
 async def track_api_usage(api_key: str, endpoint: str, status_code: int, response_time: int) -> None:
@@ -13,22 +13,39 @@ async def track_api_usage(api_key: str, endpoint: str, status_code: int, respons
         if not user_id:
             return
 
-        log_request(
-            user_id=user_id,
-            path=endpoint,
-            method="POST",
-            status_code=status_code,
-            response_time=response_time
-        )
-
+        # api_type 식별
         api_type = "handwriting" if "handwriting" in endpoint else "unknown"
         if "abstract" in endpoint:
             api_type = "abstract"
         elif "imagecaptcha" in endpoint:
             api_type = "imagecaptcha"
 
-        if status_code == 200:
-            update_daily_api_stats(api_type, True, response_time)
+        # 상세 로그 저장 (api_key, api_type 포함)
+        log_request(
+            user_id=user_id,
+            api_key=api_key,
+            path=endpoint,
+            api_type=api_type,
+            method="POST",
+            status_code=status_code,
+            response_time=response_time
+        )
+
+        # 성공/실패 모두 일별 집계 반영 (전역)
+        update_daily_api_stats(api_type, status_code == 200, response_time)
+
+        # 사용자/키/타입 단위 일별 집계 반영
+        try:
+            if api_key and user_id:
+                update_daily_api_stats_by_key(
+                    user_id=user_id,
+                    api_key=api_key,
+                    api_type=api_type,
+                    response_time=response_time,
+                    is_success=(status_code == 200),
+                )
+        except Exception:
+            pass
     except Exception as e:
         try:
             print(f"⚠️ API usage tracking failed: {e}")

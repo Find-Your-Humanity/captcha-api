@@ -22,6 +22,13 @@ REDIS_SSL = os.getenv("REDIS_SSL", "false").lower() == "true"
 REDIS_PREFIX = os.getenv("REDIS_PREFIX", "rcaptcha:")
 REDIS_TIMEOUT_MS = int(os.getenv("REDIS_TIMEOUT_MS", "2000"))
 
+# Database configuration for API key validation
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", "3306"))
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "realcatcha")
+
 # ML service endpoints
 ML_SERVICE_URL = os.getenv("ML_SERVICE_URL", "http://localhost:8001")
 ML_PREDICT_BOT_URL = f"{ML_SERVICE_URL.rstrip('/')}" + "/predict-bot"
