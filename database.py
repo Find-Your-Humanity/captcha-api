@@ -70,6 +70,104 @@ def initialize_captcha_type_columns():
         print(f"캡차 타입별 사용량 컬럼 초기화 오류: {e}")
         return False
 
+def initialize_logging_and_stats_tables():
+    """
+    api_request_logs 테이블 생성 및 일별 통계 테이블 컬럼 보강.
+    - api_request_logs: 없으면 생성
+    - daily_api_stats / daily_user_api_stats: 누락 컬럼(successful_requests, failed_requests, avg_response_time) 추가
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # 요청 로그 테이블 생성
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS api_request_logs (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        user_id INT NULL,
+                        api_key VARCHAR(255) NULL,
+                        path VARCHAR(255) NOT NULL,
+                        api_type VARCHAR(50) NULL,
+                        method VARCHAR(10) NOT NULL,
+                        status_code INT NOT NULL,
+                        response_time INT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        INDEX idx_created_at (created_at),
+                        INDEX idx_user_path (user_id, path)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+
+                # daily_api_stats 테이블 생성(없으면)
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS daily_api_stats (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        date DATE NOT NULL,
+                        api_type VARCHAR(50) NOT NULL,
+                        total_requests INT DEFAULT 0,
+                        successful_requests INT DEFAULT 0,
+                        failed_requests INT DEFAULT 0,
+                        avg_response_time DECIMAL(10,2) DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY unique_date_type (date, api_type)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+
+                # 컬럼 보강 (이미 존재하는 경우 무시)
+                try:
+                    cursor.execute("ALTER TABLE daily_api_stats ADD COLUMN successful_requests INT DEFAULT 0")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE daily_api_stats ADD COLUMN failed_requests INT DEFAULT 0")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE daily_api_stats ADD COLUMN avg_response_time DECIMAL(10,2) DEFAULT 0")
+                except Exception:
+                    pass
+
+                # daily_user_api_stats 테이블 생성(없으면)
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS daily_user_api_stats (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        date DATE NOT NULL,
+                        user_id INT NOT NULL,
+                        api_key VARCHAR(255) NOT NULL,
+                        api_type VARCHAR(50) NOT NULL,
+                        total_requests INT DEFAULT 0,
+                        successful_requests INT DEFAULT 0,
+                        failed_requests INT DEFAULT 0,
+                        avg_response_time DECIMAL(10,2) DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY unique_date_user_key_type (date, user_id, api_key, api_type)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                try:
+                    cursor.execute("ALTER TABLE daily_user_api_stats ADD COLUMN successful_requests INT DEFAULT 0")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE daily_user_api_stats ADD COLUMN failed_requests INT DEFAULT 0")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE daily_user_api_stats ADD COLUMN avg_response_time DECIMAL(10,2) DEFAULT 0")
+                except Exception:
+                    pass
+
+                print("✅ 로그/통계 테이블 초기화 완료")
+                return True
+    except Exception as e:
+        print(f"로그/통계 테이블 초기화 오류: {e}")
+        return False
+
 def verify_api_key(api_key: str) -> dict:
     """
     API 키 검증 함수
