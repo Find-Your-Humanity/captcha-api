@@ -155,11 +155,9 @@ def next_captcha(
     # Note: Origin 헤더는 FastAPI에서 자동으로 처리되지 않으므로 request.headers에서 직접 가져와야 함
     # 이 부분은 나중에 구현하거나 프록시에서 처리하도록 할 수 있습니다
     
-    # API 키 사용량 업데이트 (데모 모드가 아닌 경우에만)
-    if not api_key_info.get('is_demo', False):
-        update_api_key_usage(api_key_info['api_key_id'])
-    else:
-        print("🎯 데모 모드: API 키 사용량 업데이트 건너뜀")
+    # 사용량 집계는 검증 단계(/api/verify-captcha)에서 타입별로 처리합니다.
+    if api_key_info.get('is_demo', False):
+        print("🎯 데모 모드: 발급 단계에서 사용량 업데이트 없음")
     
     behavior_data = request.behavior_data
     correlation_id = ObjectId()
