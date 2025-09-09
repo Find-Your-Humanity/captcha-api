@@ -117,6 +117,13 @@ load_dotenv()
 # 설정 값은 config.settings에서 import하여 사용합니다.
 
 app = FastAPI()
+
+# 앱 시작 시 데이터베이스 초기화
+@app.on_event("startup")
+async def startup_event():
+    from database import initialize_captcha_type_columns
+    initialize_captcha_type_columns()
+
 app.include_router(next_captcha_router)
 app.include_router(handwriting_router)
 app.include_router(abstract_router)

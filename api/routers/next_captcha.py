@@ -47,15 +47,18 @@ def generate_captcha_token(api_key: str, captcha_type: str, user_id: int) -> str
         return token  # 오류가 있어도 토큰은 반환
 
 
-def verify_captcha_token(token: str, api_key: str) -> bool:
+def verify_captcha_token(token: str, api_key: str) -> tuple[bool, str]:
     """
-    캡차 토큰을 검증합니다.
+    캡차 토큰을 검증하고 캡차 타입을 반환합니다.
+    
+    Returns:
+        tuple: (is_valid, captcha_type)
     """
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute("""
-                    SELECT id FROM captcha_tokens 
+                    SELECT id, captcha_type FROM captcha_tokens 
                     WHERE token_id = %s AND api_key_id = %s AND expires_at > NOW() AND is_used = 0
                 """, (token, api_key))
                 
@@ -66,11 +69,11 @@ def verify_captcha_token(token: str, api_key: str) -> bool:
                         UPDATE captcha_tokens SET is_used = 1, used_at = NOW() 
                         WHERE id = %s
                     """, (result[0],))
-                    return True
-                return False
+                    return True, result[1]  # (is_valid, captcha_type)
+                return False, None
     except Exception as e:
         print(f"캡차 토큰 검증 오류: {e}")
-        return False
+        return False, None
 
 
 _mongo_client_for_behavior = None

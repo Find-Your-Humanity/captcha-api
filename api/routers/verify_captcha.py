@@ -163,17 +163,17 @@ def verify_captcha(
     # 도메인 검증 (Origin 헤더 확인)
     # TODO: Origin 헤더 검증 로직 추가
     
-    # API 키 사용량 업데이트
-    update_api_key_usage(api_key_info['api_key_id'])
-    
     # 캡차 토큰 검증 로직
     if not request.captcha_token or not request.captcha_response:
         raise HTTPException(status_code=400, detail="Invalid captcha token or response")
     
-    # 토큰 검증
-    token_valid = verify_captcha_token(request.captcha_token, x_api_key)
+    # 토큰 검증 및 캡차 타입 가져오기
+    token_valid, captcha_type = verify_captcha_token(request.captcha_token, x_api_key)
     if not token_valid:
         raise HTTPException(status_code=400, detail="Invalid or expired captcha token")
+    
+    # API 키 사용량 업데이트 (캡차 타입별)
+    update_api_key_usage(api_key_info['api_key_id'], captcha_type)
     
     # 성공 응답
     response_time = int((datetime.now() - start_time).total_seconds() * 1000)
