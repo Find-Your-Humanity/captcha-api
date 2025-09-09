@@ -125,7 +125,7 @@ def next_captcha(
     DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
     DEMO_SECRET_KEY = 'rc_sk_273d06a8a03799f7637083b50f4f08f2aa29ffb56fd1bfe64833850b4b16810c'
     
-    # 데모 키인 경우 자동으로 비밀 키 설정
+    # 데모 키인 경우 자동으로 비밀 키 설정 (데이터베이스 검증 우회)
     if x_api_key == DEMO_PUBLIC_KEY:
         x_secret_key = DEMO_SECRET_KEY
         api_key_info = {
@@ -135,6 +135,7 @@ def next_captcha(
             'max_requests_per_day': 1000,
             'max_requests_per_month': 30000
         }
+        print(f"🎯 데모 모드: {DEMO_PUBLIC_KEY} 사용")
     else:
         # 일반 API 키 검증
         from database import verify_api_key
