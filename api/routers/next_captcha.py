@@ -27,7 +27,7 @@ from database import verify_api_key, verify_domain_access, update_api_key_usage,
 router = APIRouter()
 
 
-def generate_captcha_token(api_key: str, captcha_type: str, user_id: int) -> str:
+def generate_captcha_token(api_key_id: int, captcha_type: str, user_id: int) -> str:
     """
     캡차 토큰을 생성하고 데이터베이스에 저장합니다.
     """
@@ -40,14 +40,14 @@ def generate_captcha_token(api_key: str, captcha_type: str, user_id: int) -> str
                 cursor.execute("""
                     INSERT INTO captcha_tokens (token_id, api_key_id, user_id, captcha_type, expires_at, created_at)
                     VALUES (%s, %s, %s, %s, %s, NOW())
-                """, (token, api_key, user_id, captcha_type, expires_at))
+                """, (token, api_key_id, user_id, captcha_type, expires_at))
         return token
     except Exception as e:
         print(f"캡차 토큰 생성 오류: {e}")
         return token  # 오류가 있어도 토큰은 반환
 
 
-def verify_captcha_token(token: str, api_key: str) -> tuple[bool, str]:
+def verify_captcha_token(token: str, api_key_id: int) -> tuple[bool, str]:
     """
     캡차 토큰을 검증하고 캡차 타입을 반환합니다.
     
@@ -60,7 +60,7 @@ def verify_captcha_token(token: str, api_key: str) -> tuple[bool, str]:
                 cursor.execute("""
                     SELECT id, captcha_type FROM captcha_tokens 
                     WHERE token_id = %s AND api_key_id = %s AND expires_at > NOW() AND is_used = 0
-                """, (token, api_key))
+                """, (token, api_key_id))
                 
                 result = cursor.fetchone()
                 if result:
@@ -155,11 +155,9 @@ def next_captcha(
     # Note: Origin 헤더는 FastAPI에서 자동으로 처리되지 않으므로 request.headers에서 직접 가져와야 함
     # 이 부분은 나중에 구현하거나 프록시에서 처리하도록 할 수 있습니다
     
-    # API 키 사용량 업데이트 (데모 모드가 아닌 경우에만)
-    if not api_key_info.get('is_demo', False):
-        update_api_key_usage(api_key_info['api_key_id'])
-    else:
-        print("🎯 데모 모드: API 키 사용량 업데이트 건너뜀")
+    # 사용량 집계는 검증 단계(/api/verify-captcha)에서 타입별로 처리합니다.
+    if api_key_info.get('is_demo', False):
+        print("🎯 데모 모드: 발급 단계에서 사용량 업데이트 없음")
     
     behavior_data = request.behavior_data
     correlation_id = ObjectId()
@@ -264,8 +262,8 @@ def next_captcha(
 
     try:
         if not api_key_info.get('is_demo', False):
-            # 일반 키: DB 저장 토큰 생성
-            captcha_token = generate_captcha_token(x_api_key, captcha_type, api_key_info['user_id'])
+            # 일반 키: DB 저장 토큰 생성 (정수형 api_key_id 사용)
+            captcha_token = generate_captcha_token(api_key_info['api_key_id'], captcha_type, api_key_info['user_id'])
         else:
             # 데모 키: 메모리 토큰 생성(비DB)
             captcha_token = f"demo_token_{secrets.token_urlsafe(16)}"

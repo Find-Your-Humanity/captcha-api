@@ -121,8 +121,9 @@ app = FastAPI()
 # 앱 시작 시 데이터베이스 초기화
 @app.on_event("startup")
 async def startup_event():
-    from database import initialize_captcha_type_columns
+    from database import initialize_captcha_type_columns, initialize_logging_and_stats_tables
     initialize_captcha_type_columns()
+    initialize_logging_and_stats_tables()
 
 app.include_router(next_captcha_router)
 app.include_router(handwriting_router)
