@@ -133,26 +133,7 @@ app.include_router(secure_captcha_router)
 app.include_router(verify_captcha_router)
 
 # --- API Key validation helper ---
-from typing import Optional as _Opt
-def validate_api_key(api_key: str) -> _Opt[int]:
-    """Return user_id for a valid/active api_key, else None.
-    Keep it simple: look up in api_keys table. Extend with rate limit as needed.
-    """
-    try:
-        with get_db_cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT user_id
-                FROM api_keys
-                WHERE key_id = %s AND (is_active = 1 OR is_active IS NULL)
-                LIMIT 1
-                """,
-                (api_key,)
-            )
-            row = cursor.fetchone()
-            return int(row.get("user_id")) if row and row.get("user_id") is not None else None
-    except Exception:
-        return None
+from utils.usage import validate_api_key
 
 # --- API Usage Tracking ---
 async def track_api_usage(api_key: str, endpoint: str, status_code: int, response_time: int) -> None:
