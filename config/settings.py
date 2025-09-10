@@ -82,4 +82,8 @@ BEHAVIOR_MONGO_URI = os.getenv("MONGO_URL", "")
 BEHAVIOR_MONGO_DB = os.getenv("MONGO_DB", "")
 BEHAVIOR_MONGO_COLLECTION = os.getenv("BEHAVIOR_MONGO_COLLECTION", "behavior_data")
 
+# JWT 설정
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
+DEMO_SECRET_KEY = os.getenv("DEMO_SECRET_KEY", "rc_sk_273d06a8a03799f7637083b50f4f08f2aa29ffb56fd1bfe64833850b4b16810c")
+
 
