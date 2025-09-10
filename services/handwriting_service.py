@@ -8,6 +8,9 @@ import uuid, time
 def create_handwriting_challenge(samples: list[str], target_class: str) -> dict:
     challenge_id = uuid.uuid4().hex
     ttl_seconds = CAPTCHA_TTL
+    
+    print(f"🔧 [handwriting_service] challenge 생성: id={challenge_id}, target_class='{target_class}', samples={len(samples)}개")
+    
     if get_redis():
         doc = {
             "type": "handwriting",
@@ -17,7 +20,11 @@ def create_handwriting_challenge(samples: list[str], target_class: str) -> dict:
             "attempts": 0,
             "created_at": time.time(),
         }
+        print(f"🔧 [handwriting_service] Redis 저장: {doc}")
         redis_set_json(rkey("handwriting", challenge_id), doc, ttl_seconds)
+        print(f"✅ [handwriting_service] Redis 저장 완료")
+    else:
+        print("⚠️ [handwriting_service] Redis 연결 없음")
     return {
         "challenge_id": challenge_id,
         "samples": samples,

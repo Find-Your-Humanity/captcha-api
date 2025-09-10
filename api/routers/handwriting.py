@@ -137,10 +137,20 @@ async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
     target_class_dbg = None
     try:
         if get_redis() and (req.challenge_id or ""):
+            print(f"🔧 [handwriting-verify] Redis 조회: challenge_id={req.challenge_id}")
             _doc = redis_get_json(rkey("handwriting", str(req.challenge_id)))
+            print(f"🔧 [handwriting-verify] Redis 문서: {_doc}")
             if isinstance(_doc, dict):
-                target_class_dbg = str((_doc.get("target_class") or "").strip()) or None
-    except Exception:
+                raw_target_class = _doc.get("target_class")
+                print(f"🔧 [handwriting-verify] 원본 target_class: '{raw_target_class}' (type: {type(raw_target_class)})")
+                target_class_dbg = str((raw_target_class or "").strip()) or None
+                print(f"🔧 [handwriting-verify] 처리된 target_class: '{target_class_dbg}'")
+            else:
+                print(f"⚠️ [handwriting-verify] Redis 문서가 dict가 아님: {type(_doc)}")
+        else:
+            print(f"⚠️ [handwriting-verify] Redis 연결 없거나 challenge_id 없음")
+    except Exception as e:
+        print(f"❌ [handwriting-verify] Redis 조회 오류: {e}")
         target_class_dbg = None
 
     result = verify_handwriting(req.challenge_id or "", text_norm, user_id=req.user_id, api_key=req.api_key)
