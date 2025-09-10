@@ -151,10 +151,15 @@ def create() -> Dict[str, Any]:
             is_positive_flags.append(False)
         final_paths = [candidate_paths[i] for i in selected_indices]
 
+    # 정답 index를 랜덤하게 만들기 위해 final_paths와 is_positive_flags를 함께 셔플
+    combined = list(zip(final_paths, is_positive_flags))
+    random.shuffle(combined)
+    final_paths, is_positive_flags = zip(*combined)
+    
     images: List[Dict[str, Any]] = []
     for idx, p in enumerate(final_paths):
         cdn_url = build_cdn_url(str(p), is_remote_source, asset_base_url=ASSET_BASE_URL, map_local_to_key=map_local_to_key)
         images.append({"id": idx, "url": cdn_url or ""})
-    return create_abstract_captcha([img["url"] for img in images], target_class, is_positive_flags, keywords)
+    return create_abstract_captcha([img["url"] for img in images], target_class, list(is_positive_flags), keywords)
 
 
