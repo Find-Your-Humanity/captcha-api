@@ -66,7 +66,6 @@ from api.routers.handwriting import router as handwriting_router
 from api.routers.imagegrid import router as imagegrid_router
 from api.routers.secure_captcha import router as secure_captcha_router
 from api.routers.verify_captcha import router as verify_captcha_router
-from api.routers.dashboard import router as dashboard_router
 from utils.text import normalize_text
 from infrastructure.redis_client import (
     get_redis,
@@ -132,10 +131,9 @@ app.include_router(abstract_router)
 app.include_router(imagegrid_router)
 app.include_router(secure_captcha_router)
 app.include_router(verify_captcha_router)
-app.include_router(dashboard_router)
 
 # --- API Key validation helper ---
-from utils.auth import validate_api_key
+from utils.usage import validate_api_key
 
 # --- API Usage Tracking ---
 async def track_api_usage(api_key: str, endpoint: str, status_code: int, response_time: int) -> None:

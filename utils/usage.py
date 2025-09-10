@@ -1,7 +1,27 @@
 from typing import Optional
 
-from utils.auth import validate_api_key
-from database import log_request, update_daily_api_stats, update_daily_api_stats_by_key
+from database import log_request, update_daily_api_stats, update_daily_api_stats_by_key, get_db_cursor
+
+
+def validate_api_key(api_key: str) -> Optional[int]:
+    """Return user_id for a valid/active api_key, else None.
+    Keep it simple: look up in api_keys table. Extend with rate limit as needed.
+    """
+    try:
+        with get_db_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT user_id
+                FROM api_keys
+                WHERE key_id = %s AND (is_active = 1 OR is_active IS NULL)
+                LIMIT 1
+                """,
+                (api_key,)
+            )
+            row = cursor.fetchone()
+            return int(row.get("user_id")) if row and row.get("user_id") is not None else None
+    except Exception:
+        return None
 
 
 async def track_api_usage(api_key: str, endpoint: str, status_code: int, response_time: int) -> None:
