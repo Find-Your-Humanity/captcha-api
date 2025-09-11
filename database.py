@@ -290,7 +290,7 @@ def update_api_key_usage(api_key_id: int, captcha_type: str = None):
 
 def log_request(user_id: int, api_key: str, path: str, api_type: str, method: str, status_code: int, response_time: int):
     """
-    API 요청 로그 저장
+    API 요청 로그 저장 (api_request_logs 테이블)
     """
     try:
         with get_db_connection() as conn:
@@ -302,6 +302,21 @@ def log_request(user_id: int, api_key: str, path: str, api_type: str, method: st
                 """, (user_id, api_key, path, api_type, method, status_code, response_time))
     except Exception as e:
         print(f"API 요청 로그 저장 오류: {e}")
+
+def log_request_to_request_logs(user_id: int, api_key: str, path: str, api_type: str, method: str, status_code: int, response_time: int, user_agent: str = None):
+    """
+    API 요청 로그 저장 (request_logs 테이블)
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO request_logs 
+                    (user_id, api_key, path, api_type, method, status_code, response_time, user_agent, request_time)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                """, (user_id, api_key, path, api_type, method, status_code, response_time, user_agent))
+    except Exception as e:
+        print(f"request_logs 테이블 로그 저장 오류: {e}")
 
 def update_daily_api_stats(api_type: str, is_success: bool, response_time: int):
     """
