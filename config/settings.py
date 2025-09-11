@@ -74,7 +74,7 @@ MONGO_MANIFEST_COLLECTION = os.getenv("MONGO_MANIFEST_COLLECTION", os.getenv("MO
 
 # Collections for image captcha
 BASIC_MANIFEST_COLLECTION = os.getenv("BASIC_MANIFEST_COLLECTION", "basic_manifest")
-BASIC_LABEL_COLLECTION = os.getenv("BASIC_LABEL_COLLECTION", "basic_label")
+BASIC_LABEL_COLLECTION = os.getenv("BASIC_LABEL_COLLECTION", "basic_label_mask_filtered")
 
 # Behavior data persistence
 SAVE_BEHAVIOR_TO_MONGO = os.getenv("SAVE_BEHAVIOR_TO_MONGO", "false").lower() == "true"
