@@ -315,9 +315,12 @@ def log_request_to_request_logs(user_id: int, api_key: str, path: str, api_type:
                 mapped_api_type = None
                 if api_type in ['handwriting', 'abstract', 'imagecaptcha']:
                     mapped_api_type = api_type
-                elif api_type == 'next_captcha':
-                    # next_captcha는 handwriting으로 매핑 (기본값)
+                elif api_type == 'pass':
+                    # pass는 handwriting으로 매핑 (기본값)
                     mapped_api_type = 'handwriting'
+                elif api_type == 'image':
+                    # image는 imagecaptcha로 매핑
+                    mapped_api_type = 'imagecaptcha'
                 
                 cursor.execute("""
                     INSERT INTO request_logs 
