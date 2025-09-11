@@ -261,6 +261,90 @@ def verify_domain_access(api_key_info: dict, request_domain: str) -> bool:
         print(f"도메인 검증 오류: {e}")
         return True  # 오류 시 허용
 
+def verify_api_key_with_secret(api_key: str, secret_key: str) -> dict:
+    """
+    공개 키와 비밀 키 쌍을 검증합니다. 데모 키는 환경 변수 DEMO_SECRET_KEY로 검증합니다.
+    성공 시 api_key_info dict 반환, 실패 시 None.
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT 
+                        ak.id, ak.user_id, ak.name, ak.is_active, ak.rate_limit_per_minute,
+                        ak.rate_limit_per_day, ak.usage_count, ak.last_used_at, ak.allowed_origins,
+                        ak.is_demo, ak.secret_key,
+                        u.email, us.plan_id, p.name AS plan_name
+                    FROM api_keys ak
+                    LEFT JOIN users u ON ak.user_id = u.id
+                    LEFT JOIN user_subscriptions us ON u.id = us.user_id
+                    LEFT JOIN plans p ON us.plan_id = p.id
+                    WHERE ak.key_id = %s AND ak.is_active = 1
+                    """,
+                    (api_key,),
+                )
+                result = cursor.fetchone()
+                if not result:
+                    return None
+                is_demo = result[9] == 1
+                if is_demo:
+                    import os
+                    demo_secret_key = os.getenv('DEMO_SECRET_KEY')
+                    if not demo_secret_key or secret_key != demo_secret_key:
+                        return None
+                else:
+                    if secret_key != result[10]:
+                        return None
+                return {
+                    'api_key_id': result[0],
+                    'user_id': result[1],
+                    'key_name': result[2],
+                    'is_active': result[3],
+                    'rate_limit_per_minute': result[4],
+                    'rate_limit_per_day': result[5],
+                    'usage_count': result[6],
+                    'last_used_at': result[7],
+                    'allowed_origins': result[8],
+                    'is_demo': result[9],
+                    'user_email': result[11],
+                    'plan_id': result[12],
+                    'plan_name': result[13],
+                }
+    except Exception as e:
+        print(f"API 키/비밀 키 검증 오류: {e}")
+        return None
+
+def verify_captcha_token(token: str, api_key_id: int):
+    """
+    captcha_tokens 테이블에서 토큰을 검증하고 타입을 반환합니다.
+    (is_valid, captcha_type) 튜플 반환
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, captcha_type FROM captcha_tokens 
+                    WHERE token_id = %s AND api_key_id = %s AND expires_at > NOW() AND is_used = 0
+                    """,
+                    (token, api_key_id),
+                )
+                result = cursor.fetchone()
+                if result:
+                    cursor.execute(
+                        """
+                        UPDATE captcha_tokens SET is_used = 1, used_at = NOW() 
+                        WHERE id = %s
+                        """,
+                        (result[0],),
+                    )
+                    return True, result[1]
+                return False, None
+    except Exception as e:
+        print(f"캡차 토큰 검증 오류: {e}")
+        return False, None
+
 def update_api_key_usage(api_key_id: int, captcha_type: str = None):
     """
     API 키 사용량 업데이트 (캡차 타입별)

@@ -4,8 +4,7 @@ from typing import Optional, Dict, Any
 import json
 from datetime import datetime
 
-from database import verify_api_key, verify_domain_access, update_api_key_usage, log_request, get_db_connection
-from .next_captcha import verify_captcha_token
+from database import verify_api_key, verify_domain_access, update_api_key_usage, log_request, get_db_connection, verify_captcha_token
 
 router = APIRouter()
 
