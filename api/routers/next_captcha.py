@@ -297,6 +297,23 @@ def next_captcha(
         print(f"📦 [/api/next-captcha] response: {json.dumps(preview, ensure_ascii=False)}")
     except Exception:
         pass
+    
+    # API 요청 로그 저장
+    try:
+        if api_key_info and not api_key_info.get('is_demo', False):
+            log_request(
+                user_id=api_key_info['user_id'],
+                api_key=x_api_key,
+                path="/api/next-captcha",
+                api_type="next_captcha",
+                method="POST",
+                status_code=200,
+                response_time=0  # next-captcha는 응답시간 측정하지 않음
+            )
+            print(f"📝 [/api/next-captcha] 로그 저장 완료")
+    except Exception as e:
+        print(f"⚠️ [/api/next-captcha] 로그 저장 실패: {e}")
+    
     return payload
 
 

@@ -146,3 +146,5 @@ return create_abstract_captcha([img["url"] for img in images], target_class, lis
 **작성일**: 2025-01-27  
 **분석 범위**: Git Pull 전후 비교 (커밋 03e2466)  
 **상태**: 현재 모든 캡차가 handwriting으로 고정됨
+
+

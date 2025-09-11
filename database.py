@@ -163,7 +163,7 @@ def initialize_logging_and_stats_tables():
                     pass
 
                 print("✅ 로그/통계 테이블 초기화 완료")
-                return True
+            return True
     except Exception as e:
         print(f"로그/통계 테이블 초기화 오류: {e}")
         return False
@@ -227,7 +227,7 @@ def verify_domain_access(api_key_info: dict, request_domain: str) -> bool:
         
         if not allowed_origins or len(allowed_origins) == 0:
             return True
-        
+            
         for allowed_origin in allowed_origins:
             if allowed_origin.startswith('*.'):
                 # 와일드카드 도메인 (예: *.example.com)
