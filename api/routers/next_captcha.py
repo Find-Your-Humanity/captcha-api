@@ -22,7 +22,7 @@ from config.settings import (
 )
 from utils.usage import track_api_usage
 from database import verify_domain_access, update_api_key_usage, get_db_connection, log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
-from .verify_captcha import verify_api_key_with_secret
+from database import verify_api_key_with_secret
 
 
 router = APIRouter()

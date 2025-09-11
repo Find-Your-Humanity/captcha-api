@@ -6,7 +6,7 @@ from services.imagegrid_service import create_imagegrid_challenge, verify_imageg
 from schemas.requests import ImageGridVerifyRequest
 from utils.usage import track_api_usage
 from database import log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
-from .verify_captcha import verify_api_key_with_secret
+from database import verify_api_key_with_secret
 
 
 router = APIRouter()
