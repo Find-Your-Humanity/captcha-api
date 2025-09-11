@@ -22,7 +22,7 @@ from config.settings import (
 )
 from utils.usage import track_api_usage
 from database import verify_domain_access, update_api_key_usage, get_db_connection, log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
-from database import verify_api_key_with_secret
+from database import verify_api_key_with_secret, verify_api_key_auto_secret
 
 
 router = APIRouter()
@@ -123,10 +123,10 @@ def next_captcha(
 ):
     print(f"🚀 [/api/next-captcha] 요청 시작 - API Key: {x_api_key[:20] if x_api_key else 'None'}...")
     
-    # API 키/시크릿 검증
-    if not x_api_key or not x_secret_key:
-        print("❌ API 키/시크릿 없음")
-        raise HTTPException(status_code=401, detail="API key and secret key required")
+    # API 키/시크릿 검증 (데모 모드 예외 허용: 공개키만으로 조회)
+    if not x_api_key:
+        print("❌ API 키 없음")
+        raise HTTPException(status_code=401, detail="API key required")
     
     # 데모 키 하드코딩 (홈페이지 데모용)
     DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
@@ -134,21 +134,15 @@ def next_captcha(
     
     # 데모 키 처리 (환경 변수 DEMO_SECRET_KEY 필요)
     if x_api_key == DEMO_PUBLIC_KEY:
-        import os
-        demo_secret_key = os.getenv('DEMO_SECRET_KEY')
-        if not demo_secret_key or x_secret_key != demo_secret_key:
-            raise HTTPException(status_code=401, detail="Invalid demo secret key")
-        api_key_info = {
-            'key_id': 'demo',
-            'api_key_id': 'demo',
-            'user_id': 6,
-            'is_demo': True,
-            'max_requests_per_day': 1000,
-            'max_requests_per_month': 30000
-        }
-        print(f"🎯 데모 모드: {DEMO_PUBLIC_KEY} 사용")
+        # 데모: 공개키만으로 DB에서 is_demo 키 확인 후 통과 (시크릿 불요)
+        api_key_info = verify_api_key_auto_secret(x_api_key)
+        if not api_key_info or not api_key_info.get('is_demo'):
+            raise HTTPException(status_code=401, detail="Invalid demo api key")
+        print(f"🎯 데모 모드(DB): {DEMO_PUBLIC_KEY} 사용")
     else:
-        # 일반 API 키/시크릿 검증
+        # 일반: 공개/비밀키 쌍 검증
+        if not x_secret_key:
+            raise HTTPException(status_code=401, detail="API key and secret key required")
         api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
         if not api_key_info:
             raise HTTPException(status_code=401, detail="Invalid API key or secret key")
