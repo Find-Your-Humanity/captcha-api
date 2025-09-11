@@ -5,7 +5,8 @@ import time
 from services.imagegrid_service import create_imagegrid_challenge, verify_imagegrid
 from schemas.requests import ImageGridVerifyRequest
 from utils.usage import track_api_usage
-from database import verify_api_key, log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
+from database import log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
+from .verify_captcha import verify_api_key_with_secret
 
 
 router = APIRouter()
@@ -13,19 +14,24 @@ router = APIRouter()
 
 @router.post("/api/image-challenge")
 def create_image_challenge(
-    x_api_key: Optional[str] = Header(None)
+    x_api_key: Optional[str] = Header(None),
+    x_secret_key: Optional[str] = Header(None)
 ) -> Dict[str, Any]:
     start_time = time.time()
     
-    # API 키 검증
-    if not x_api_key:
-        raise HTTPException(status_code=401, detail="API key required")
+    # API 키/시크릿 검증
+    if not x_api_key or not x_secret_key:
+        raise HTTPException(status_code=401, detail="API key and secret key required")
     
     # 데모 키 하드코딩 (홈페이지 데모용)
     DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
     
-    # 데모 키인 경우 자동으로 처리
+    # 데모 키 처리 (환경 변수 DEMO_SECRET_KEY 필요)
     if x_api_key == DEMO_PUBLIC_KEY:
+        import os
+        demo_secret_key = os.getenv('DEMO_SECRET_KEY')
+        if not demo_secret_key or x_secret_key != demo_secret_key:
+            raise HTTPException(status_code=401, detail="Invalid demo secret key")
         api_key_info = {
             'key_id': 'demo',
             'api_key_id': 'demo',
@@ -33,10 +39,10 @@ def create_image_challenge(
             'is_demo': True
         }
     else:
-        # 일반 API 키 검증
-        api_key_info = verify_api_key(x_api_key)
+        # 일반 API 키/시크릿 검증
+        api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
         if not api_key_info:
-            raise HTTPException(status_code=401, detail="Invalid API key")
+            raise HTTPException(status_code=401, detail="Invalid API key or secret key")
     
     try:
         result = create_imagegrid_challenge()

@@ -21,7 +21,8 @@ from config.settings import (
     BEHAVIOR_MONGO_COLLECTION,
 )
 from utils.usage import track_api_usage
-from database import verify_api_key, verify_domain_access, update_api_key_usage, get_db_connection, log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
+from database import verify_domain_access, update_api_key_usage, get_db_connection, log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
+from .verify_captcha import verify_api_key_with_secret
 
 
 router = APIRouter()
@@ -122,21 +123,24 @@ def next_captcha(
 ):
     print(f"🚀 [/api/next-captcha] 요청 시작 - API Key: {x_api_key[:20] if x_api_key else 'None'}...")
     
-    # API 키 검증
-    if not x_api_key:
-        print("❌ API 키 없음")
-        raise HTTPException(status_code=401, detail="API key required")
+    # API 키/시크릿 검증
+    if not x_api_key or not x_secret_key:
+        print("❌ API 키/시크릿 없음")
+        raise HTTPException(status_code=401, detail="API key and secret key required")
     
     # 데모 키 하드코딩 (홈페이지 데모용)
     DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
     DEMO_SECRET_KEY = 'rc_sk_273d06a8a03799f7637083b50f4f08f2aa29ffb56fd1bfe64833850b4b16810c'
     
-    # 데모 키인 경우 자동으로 비밀 키 설정 (데이터베이스 검증 우회)
+    # 데모 키 처리 (환경 변수 DEMO_SECRET_KEY 필요)
     if x_api_key == DEMO_PUBLIC_KEY:
-        x_secret_key = DEMO_SECRET_KEY
+        import os
+        demo_secret_key = os.getenv('DEMO_SECRET_KEY')
+        if not demo_secret_key or x_secret_key != demo_secret_key:
+            raise HTTPException(status_code=401, detail="Invalid demo secret key")
         api_key_info = {
             'key_id': 'demo',
-            'api_key_id': 'demo',  # update_api_key_usage 함수에서 필요
+            'api_key_id': 'demo',
             'user_id': 6,
             'is_demo': True,
             'max_requests_per_day': 1000,
@@ -144,12 +148,10 @@ def next_captcha(
         }
         print(f"🎯 데모 모드: {DEMO_PUBLIC_KEY} 사용")
     else:
-        # 일반 API 키 검증 (챌린지 발급 단계에서는 공개 키만 확인)
-        from database import verify_api_key
-        api_key_info = verify_api_key(x_api_key)
+        # 일반 API 키/시크릿 검증
+        api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
         if not api_key_info:
-            raise HTTPException(status_code=401, detail="Invalid API key")
-        # 비밀 키 검증은 응답 검증 단계(/api/verify-captcha)에서 수행
+            raise HTTPException(status_code=401, detail="Invalid API key or secret key")
     
     # 도메인 검증 (Origin 헤더 확인)
     # Note: Origin 헤더는 FastAPI에서 자동으로 처리되지 않으므로 request.headers에서 직접 가져와야 함
