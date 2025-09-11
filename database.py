@@ -57,13 +57,30 @@ def initialize_captcha_type_columns():
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
-                # 캡차 타입별 사용량 컬럼 추가
-                cursor.execute("""
-                    ALTER TABLE api_keys 
-                    ADD COLUMN IF NOT EXISTS usage_count_image INT DEFAULT 0 COMMENT '이미지 캡차 사용량',
-                    ADD COLUMN IF NOT EXISTS usage_count_handwriting INT DEFAULT 0 COMMENT '손글씨 캡차 사용량',
-                    ADD COLUMN IF NOT EXISTS usage_count_abstract INT DEFAULT 0 COMMENT '추상 캡차 사용량'
-                """)
+                # 캡차 타입별 사용량 컬럼 추가 (각각 따로 실행)
+                try:
+                    cursor.execute("""
+                        ALTER TABLE api_keys 
+                        ADD COLUMN IF NOT EXISTS usage_count_image INT DEFAULT 0 COMMENT '이미지 캡차 사용량'
+                    """)
+                except Exception:
+                    pass  # 컬럼이 이미 존재하는 경우 무시
+                
+                try:
+                    cursor.execute("""
+                        ALTER TABLE api_keys 
+                        ADD COLUMN IF NOT EXISTS usage_count_handwriting INT DEFAULT 0 COMMENT '손글씨 캡차 사용량'
+                    """)
+                except Exception:
+                    pass  # 컬럼이 이미 존재하는 경우 무시
+                
+                try:
+                    cursor.execute("""
+                        ALTER TABLE api_keys 
+                        ADD COLUMN IF NOT EXISTS usage_count_abstract INT DEFAULT 0 COMMENT '추상 캡차 사용량'
+                    """)
+                except Exception:
+                    pass  # 컬럼이 이미 존재하는 경우 무시
                 print("✅ 캡차 타입별 사용량 컬럼 초기화 완료")
                 return True
     except Exception as e:
