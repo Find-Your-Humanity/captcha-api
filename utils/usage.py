@@ -1,6 +1,6 @@
 from typing import Optional
 
-from database import log_request, update_daily_api_stats, update_daily_api_stats_by_key, get_db_cursor
+from database import log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key, get_db_cursor
 
 
 def validate_api_key(api_key: str) -> Optional[int]:
@@ -40,7 +40,7 @@ async def track_api_usage(api_key: str, endpoint: str, status_code: int, respons
         elif "imagecaptcha" in endpoint:
             api_type = "imagecaptcha"
 
-        # 상세 로그 저장 (api_key, api_type 포함)
+        # 상세 로그 저장 (api_request_logs 테이블)
         log_request(
             user_id=user_id,
             api_key=api_key,
@@ -49,6 +49,18 @@ async def track_api_usage(api_key: str, endpoint: str, status_code: int, respons
             method="POST",
             status_code=status_code,
             response_time=response_time
+        )
+        
+        # request_logs 테이블에도 로그 저장
+        log_request_to_request_logs(
+            user_id=user_id,
+            api_key=api_key,
+            path=endpoint,
+            api_type=api_type,
+            method="POST",
+            status_code=status_code,
+            response_time=response_time,
+            user_agent=None  # captcha-api에서는 user_agent를 받지 않음
         )
 
         # 성공/실패 모두 일별 집계 반영 (전역)

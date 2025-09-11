@@ -57,13 +57,30 @@ def initialize_captcha_type_columns():
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
-                # 캡차 타입별 사용량 컬럼 추가
-                cursor.execute("""
-                    ALTER TABLE api_keys 
-                    ADD COLUMN IF NOT EXISTS usage_count_image INT DEFAULT 0 COMMENT '이미지 캡차 사용량',
-                    ADD COLUMN IF NOT EXISTS usage_count_handwriting INT DEFAULT 0 COMMENT '손글씨 캡차 사용량',
-                    ADD COLUMN IF NOT EXISTS usage_count_abstract INT DEFAULT 0 COMMENT '추상 캡차 사용량'
-                """)
+                # 캡차 타입별 사용량 컬럼 추가 (각각 따로 실행)
+                try:
+                    cursor.execute("""
+                        ALTER TABLE api_keys 
+                        ADD COLUMN IF NOT EXISTS usage_count_image INT DEFAULT 0 COMMENT '이미지 캡차 사용량'
+                    """)
+                except Exception:
+                    pass  # 컬럼이 이미 존재하는 경우 무시
+                
+                try:
+                    cursor.execute("""
+                        ALTER TABLE api_keys 
+                        ADD COLUMN IF NOT EXISTS usage_count_handwriting INT DEFAULT 0 COMMENT '손글씨 캡차 사용량'
+                    """)
+                except Exception:
+                    pass  # 컬럼이 이미 존재하는 경우 무시
+                
+                try:
+                    cursor.execute("""
+                        ALTER TABLE api_keys 
+                        ADD COLUMN IF NOT EXISTS usage_count_abstract INT DEFAULT 0 COMMENT '추상 캡차 사용량'
+                    """)
+                except Exception:
+                    pass  # 컬럼이 이미 존재하는 경우 무시
                 print("✅ 캡차 타입별 사용량 컬럼 초기화 완료")
                 return True
     except Exception as e:
@@ -163,7 +180,7 @@ def initialize_logging_and_stats_tables():
                     pass
 
                 print("✅ 로그/통계 테이블 초기화 완료")
-                return True
+            return True
     except Exception as e:
         print(f"로그/통계 테이블 초기화 오류: {e}")
         return False
@@ -227,7 +244,7 @@ def verify_domain_access(api_key_info: dict, request_domain: str) -> bool:
         
         if not allowed_origins or len(allowed_origins) == 0:
             return True
-        
+            
         for allowed_origin in allowed_origins:
             if allowed_origin.startswith('*.'):
                 # 와일드카드 도메인 (예: *.example.com)
@@ -290,7 +307,7 @@ def update_api_key_usage(api_key_id: int, captcha_type: str = None):
 
 def log_request(user_id: int, api_key: str, path: str, api_type: str, method: str, status_code: int, response_time: int):
     """
-    API 요청 로그 저장
+    API 요청 로그 저장 (api_request_logs 테이블)
     """
     try:
         with get_db_connection() as conn:
@@ -302,6 +319,33 @@ def log_request(user_id: int, api_key: str, path: str, api_type: str, method: st
                 """, (user_id, api_key, path, api_type, method, status_code, response_time))
     except Exception as e:
         print(f"API 요청 로그 저장 오류: {e}")
+
+def log_request_to_request_logs(user_id: int, api_key: str, path: str, api_type: str, method: str, status_code: int, response_time: int, user_agent: str = None):
+    """
+    API 요청 로그 저장 (request_logs 테이블)
+    request_logs 테이블의 api_type은 ENUM('handwriting', 'abstract', 'imagecaptcha')로 제한되어 있음
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # request_logs 테이블의 api_type ENUM에 맞게 매핑
+                mapped_api_type = None
+                if api_type in ['handwriting', 'abstract', 'imagecaptcha']:
+                    mapped_api_type = api_type
+                elif api_type == 'pass':
+                    # pass는 handwriting으로 매핑 (기본값)
+                    mapped_api_type = 'handwriting'
+                elif api_type == 'image':
+                    # image는 imagecaptcha로 매핑
+                    mapped_api_type = 'imagecaptcha'
+                
+                cursor.execute("""
+                    INSERT INTO request_logs 
+                    (user_id, api_key, path, api_type, method, status_code, response_time, user_agent, request_time)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                """, (user_id, api_key, path, mapped_api_type, method, status_code, response_time, user_agent))
+    except Exception as e:
+        print(f"request_logs 테이블 로그 저장 오류: {e}")
 
 def update_daily_api_stats(api_type: str, is_success: bool, response_time: int):
     """

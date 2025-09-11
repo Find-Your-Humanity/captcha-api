@@ -21,7 +21,7 @@ from config.settings import (
     BEHAVIOR_MONGO_COLLECTION,
 )
 from utils.usage import track_api_usage
-from database import verify_api_key, verify_domain_access, update_api_key_usage, get_db_connection
+from database import verify_api_key, verify_domain_access, update_api_key_usage, get_db_connection, log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
 
 
 router = APIRouter()
@@ -297,6 +297,49 @@ def next_captcha(
         print(f"📦 [/api/next-captcha] response: {json.dumps(preview, ensure_ascii=False)}")
     except Exception:
         pass
+    
+    # API 요청 로그 저장
+    try:
+        if api_key_info and not api_key_info.get('is_demo', False):
+            # 상세 로그 저장 (api_request_logs 테이블) - 실제 captcha_type 사용
+            log_request(
+                user_id=api_key_info['user_id'],
+                api_key=x_api_key,
+                path="/api/next-captcha",
+                api_type=captcha_type,  # 실제 결정된 captcha_type 사용
+                method="POST",
+                status_code=200,
+                response_time=0  # next-captcha는 응답시간 측정하지 않음
+            )
+            
+            # request_logs 테이블에도 로그 저장 - 실제 captcha_type 사용
+            log_request_to_request_logs(
+                user_id=api_key_info['user_id'],
+                api_key=x_api_key,
+                path="/api/next-captcha",
+                api_type=captcha_type,  # 실제 결정된 captcha_type 사용
+                method="POST",
+                status_code=200,
+                response_time=0,
+                user_agent=None
+            )
+            
+            # 일별 통계 업데이트 (전역) - 실제 captcha_type 사용
+            update_daily_api_stats(captcha_type, True, 0)
+            
+            # 사용자별 일별 통계 업데이트 - 실제 captcha_type 사용
+            update_daily_api_stats_by_key(
+                user_id=api_key_info['user_id'],
+                api_key=x_api_key,
+                api_type=captcha_type,  # 실제 결정된 captcha_type 사용
+                response_time=0,
+                is_success=True
+            )
+            
+            print(f"📝 [/api/next-captcha] 로그 및 통계 저장 완료")
+    except Exception as e:
+        print(f"⚠️ [/api/next-captcha] 로그 저장 실패: {e}")
+    
     return payload
 
 
