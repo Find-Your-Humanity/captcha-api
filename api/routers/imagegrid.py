@@ -6,7 +6,7 @@ from services.imagegrid_service import create_imagegrid_challenge, verify_imageg
 from schemas.requests import ImageGridVerifyRequest
 from utils.usage import track_api_usage
 from database import log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
-from database import verify_api_key_with_secret
+from database import verify_api_key_with_secret, verify_api_key_auto_secret
 
 
 router = APIRouter()
@@ -19,27 +19,21 @@ def create_image_challenge(
 ) -> Dict[str, Any]:
     start_time = time.time()
     
-    # API 키/시크릿 검증
-    if not x_api_key or not x_secret_key:
-        raise HTTPException(status_code=401, detail="API key and secret key required")
+    # API 키/시크릿 검증 (데모 키는 공개키만으로 허용)
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="API key required")
     
     # 데모 키 하드코딩 (홈페이지 데모용)
     DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
     
     # 데모 키 처리 (환경 변수 DEMO_SECRET_KEY 필요)
     if x_api_key == DEMO_PUBLIC_KEY:
-        import os
-        demo_secret_key = os.getenv('DEMO_SECRET_KEY')
-        if not demo_secret_key or x_secret_key != demo_secret_key:
-            raise HTTPException(status_code=401, detail="Invalid demo secret key")
-        api_key_info = {
-            'key_id': 'demo',
-            'api_key_id': 'demo',
-            'user_id': 6,
-            'is_demo': True
-        }
+        api_key_info = verify_api_key_auto_secret(x_api_key)
+        if not api_key_info or not api_key_info.get('is_demo'):
+            raise HTTPException(status_code=401, detail="Invalid demo api key")
     else:
-        # 일반 API 키/시크릿 검증
+        if not x_secret_key:
+            raise HTTPException(status_code=401, detail="API key and secret key required")
         api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
         if not api_key_info:
             raise HTTPException(status_code=401, detail="Invalid API key or secret key")
