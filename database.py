@@ -306,15 +306,24 @@ def log_request(user_id: int, api_key: str, path: str, api_type: str, method: st
 def log_request_to_request_logs(user_id: int, api_key: str, path: str, api_type: str, method: str, status_code: int, response_time: int, user_agent: str = None):
     """
     API 요청 로그 저장 (request_logs 테이블)
+    request_logs 테이블의 api_type은 ENUM('handwriting', 'abstract', 'imagecaptcha')로 제한되어 있음
     """
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
+                # request_logs 테이블의 api_type ENUM에 맞게 매핑
+                mapped_api_type = None
+                if api_type in ['handwriting', 'abstract', 'imagecaptcha']:
+                    mapped_api_type = api_type
+                elif api_type == 'next_captcha':
+                    # next_captcha는 handwriting으로 매핑 (기본값)
+                    mapped_api_type = 'handwriting'
+                
                 cursor.execute("""
                     INSERT INTO request_logs 
                     (user_id, api_key, path, api_type, method, status_code, response_time, user_agent, request_time)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                """, (user_id, api_key, path, api_type, method, status_code, response_time, user_agent))
+                """, (user_id, api_key, path, mapped_api_type, method, status_code, response_time, user_agent))
     except Exception as e:
         print(f"request_logs 테이블 로그 저장 오류: {e}")
 
