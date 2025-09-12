@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 class CaptchaRequest(BaseModel):
     behavior_data: Dict[str, Any]
+    session_id: Optional[str] = None
 
 
 class HandwritingVerifyRequest(BaseModel):

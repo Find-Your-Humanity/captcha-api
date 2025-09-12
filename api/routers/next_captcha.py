@@ -24,6 +24,12 @@ from config.settings import (
 from utils.usage import track_api_usage
 from database import verify_domain_access, update_api_key_usage, get_db_connection, log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
 from database import verify_api_key_with_secret, verify_api_key_auto_secret
+from infrastructure.redis_client import (
+    create_checkbox_session, 
+    get_checkbox_session, 
+    increment_checkbox_attempts, 
+    is_checkbox_session_blocked
+)
 
 
 router = APIRouter()
@@ -209,6 +215,32 @@ def next_captcha(
     if api_key_info.get('is_demo', False):
         print("🎯 데모 모드: 발급 단계에서 사용량 업데이트 없음")
     
+    # 체크박스 세션 생성 또는 조회
+    checkbox_session_id = request.session_id or str(uuid.uuid4())
+    print(f"🔑 체크박스 세션 ID: {checkbox_session_id}")
+    
+    # 기존 세션이 있는지 확인
+    existing_session = get_checkbox_session(checkbox_session_id)
+    if not existing_session:
+        # 새 세션 생성
+        create_checkbox_session(checkbox_session_id, ttl=300)  # 5분 TTL
+        print(f"✅ 새 체크박스 세션 생성: {checkbox_session_id}")
+    else:
+        print(f"📋 기존 체크박스 세션 사용: {checkbox_session_id}")
+    
+    # 세션이 차단되었는지 확인
+    if is_checkbox_session_blocked(checkbox_session_id):
+        print(f"🚫 차단된 세션: {checkbox_session_id}")
+        return {
+            "message": "Session blocked due to suspicious activity",
+            "status": "blocked",
+            "session_id": checkbox_session_id,
+            "is_blocked": True,
+            "captcha_type": "",
+            "next_captcha": "",
+            "captcha_token": None
+        }
+    
     behavior_data = request.behavior_data
     correlation_id = ObjectId()
     try:
@@ -258,19 +290,26 @@ def next_captcha(
     except Exception:
         pass
 
-    try:
-        response = httpx.post(ML_PREDICT_BOT_URL, json={"behavior_data": behavior_data})
-        response.raise_for_status()
-        result = response.json()
-        confidence_score = result.get("confidence_score", 50)
-        is_bot = result.get("is_bot", False)
-        ML_SERVICE_USED = True
-        print(f"🤖 ML API 결과: 신뢰도={confidence_score}, 봇여부={is_bot}")
-    except Exception as e:
-        print(f"❌ ML 서비스 호출 실패: {e}")
-        confidence_score = 75
-        is_bot = False
-        ML_SERVICE_USED = False
+    # 테스트용: confidence_score 0점으로 하드코딩
+    confidence_score = 0  # 테스트용 하드코딩
+    is_bot = True
+    ML_SERVICE_USED = False  # 실제 ML 서비스 사용하지 않음
+    print(f"🧪 테스트 모드: 신뢰도={confidence_score}, 봇여부={is_bot}")
+    
+    # 원래 코드 (주석 처리)
+    # try:
+    #     response = httpx.post(ML_PREDICT_BOT_URL, json={"behavior_data": behavior_data})
+    #     response.raise_for_status()
+    #     result = response.json()
+    #     confidence_score = result.get("confidence_score", 50)
+    #     is_bot = result.get("is_bot", False)
+    #     ML_SERVICE_USED = True
+    #     print(f"🤖 ML API 결과: 신뢰도={confidence_score}, 봇여부={is_bot}")
+    # except Exception as e:
+    #     print(f"❌ ML 서비스 호출 실패: {e}")
+    #     confidence_score = 75
+    #     is_bot = False
+    #     ML_SERVICE_USED = False
 
     # 점수 저장: behavior_data의 생성된 correlation_id를 참조하여 별도 컬렉션에 저장
     # 모바일 환경에서는 저장하지 않음
@@ -289,29 +328,48 @@ def next_captcha(
     else:
         print("🛡️ 모바일 환경 감지: behavior_data_score MongoDB 저장 건너뜀")
 
-    # [계획된 로직 안내 - 아직 미적용]
-    # 사용자 행동 데이터 신뢰도 점수(confidence_score)를 기준으로 다음 캡차 타입을 결정합니다.
-    # - 95 이상: 추가 캡차 없이 통과(pass)
-    # - 80 이상: 이미지 그리드 캡차(Basic) → "imagecaptcha"
-    # - 50 이상: 추상 이미지 캡차 → "abstractcaptcha"
-    # - 50 미만: 손글씨 캡차 → "handwritingcaptcha"
-    #
-    # 아래는 실제 적용 시 참고할 예시 코드입니다. (주석 처리)
-    if confidence_score >= 95:
-        next_captcha_value = None  # pass
-        captcha_type = "pass"
-    elif confidence_score >= 80:
-        next_captcha_value = "imagecaptcha"   # Basic
-        captcha_type = "image"
-    elif confidence_score >= 50:
-        next_captcha_value = "abstractcaptcha"
-        captcha_type = "abstract"
+    # 체크박스 시도 횟수 추적 및 봇 차단 로직
+    is_low_score = confidence_score <= 9
+    session_data = increment_checkbox_attempts(checkbox_session_id, is_low_score=is_low_score, ttl=300)
+    
+    if session_data and session_data.get("is_blocked", False):
+        print(f"🚫 봇 차단: 세션 {checkbox_session_id}, 낮은 점수 시도 횟수: {session_data.get('low_score_attempts', 0)}")
+        return {
+            "message": "Session blocked due to repeated low confidence scores",
+            "status": "blocked",
+            "session_id": checkbox_session_id,
+            "is_blocked": True,
+            "confidence_score": confidence_score,
+            "low_score_attempts": session_data.get("low_score_attempts", 0),
+            "captcha_type": "",
+            "next_captcha": "",
+            "captcha_token": None
+        }
+    
+    # 모바일 환경에서는 체크박스만 표시하고 다음 캡차 단계로 진행하지 않음
+    if _is_mobile_user_agent(user_agent or ""):
+        print("📱 모바일 환경: 체크박스만 표시, 다음 캡차 단계 없음")
+        next_captcha_value = None  # 다음 캡차 없음
+        captcha_type = "pass"      # 통과 처리
     else:
-        next_captcha_value = "handwritingcaptcha"
-        captcha_type = "handwriting"
-
-    # captcha_type = "image"
-    # next_captcha_value = "imagecaptcha"
+        # 데스크톱 환경: 신뢰도 점수에 따른 캡차 타입 결정
+        if confidence_score >= 90:
+            next_captcha_value = None  # pass
+            captcha_type = "pass"
+        elif confidence_score >= 60:
+            next_captcha_value = "imagecaptcha"   # Basic
+            captcha_type = "image"
+        elif confidence_score >= 40:
+            next_captcha_value = "abstractcaptcha"
+            captcha_type = "abstract"
+        elif confidence_score >= 10:
+            next_captcha_value = "handwritingcaptcha"
+            captcha_type = "handwriting"
+        else:   
+            # confidence_score 9 이하: 봇일 확률 높음, 시도 횟수 제한 적용
+            print(f"⚠️ 낮은 신뢰도 점수: {confidence_score}, 시도 횟수: {session_data.get('low_score_attempts', 0) if session_data else 0}")
+            next_captcha_value = ""  # 캡차 비활성화
+            captcha_type = ""
 
     # 안전 기본값 초기화 (예외 상황 방지)
     captcha_token: Optional[str] = None
@@ -340,7 +398,11 @@ def next_captcha(
         "captcha_token": captcha_token,
         "behavior_data_received": len(str(behavior_data)) > 0,
         "ml_service_used": ML_SERVICE_USED,
-        "is_bot_detected": is_bot if ML_SERVICE_USED else None
+        "is_bot_detected": is_bot if ML_SERVICE_USED else None,
+        "session_id": checkbox_session_id,
+        "is_blocked": False,
+        "attempts": session_data.get("attempts", 0) if session_data else 0,
+        "low_score_attempts": session_data.get("low_score_attempts", 0) if session_data else 0
     }
     try:
         preview = {
