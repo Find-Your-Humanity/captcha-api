@@ -187,12 +187,19 @@ def next_captcha(
             raise HTTPException(status_code=401, detail="Invalid demo api key")
         print(f"🎯 데모 모드(DB): {DEMO_PUBLIC_KEY} 사용")
     else:
-        # 일반: 공개/비밀키 쌍 검증
+        # 일반: 챌린지 요청은 공개키만, 최종 검증은 공개키+비밀키
         if not x_secret_key:
-            raise HTTPException(status_code=401, detail="API key and secret key required")
-        api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
-        if not api_key_info:
-            raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+            # 2단계: 공개키만으로 챌린지 요청 (브라우저에서 직접 호출)
+            api_key_info = verify_api_key_auto_secret(x_api_key)
+            if not api_key_info:
+                raise HTTPException(status_code=401, detail="Invalid API key")
+            print(f"🌐 챌린지 요청 모드: {x_api_key[:20]}... (공개키만)")
+        else:
+            # 4단계: 공개키+비밀키로 최종 검증 (사용자 서버에서 호출)
+            api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
+            if not api_key_info:
+                raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+            print(f"🔐 최종 검증 모드: {x_api_key[:20]}... (공개키+비밀키)")
     
     # 도메인 검증 (Origin 헤더 확인)
     # Note: Origin 헤더는 FastAPI에서 자동으로 처리되지 않으므로 request.headers에서 직접 가져와야 함
