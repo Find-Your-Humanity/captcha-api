@@ -283,26 +283,19 @@ def next_captcha(
     except Exception:
         pass
 
-    # 테스트용: confidence_score 0점으로 하드코딩
-    confidence_score = 0  # 테스트용 하드코딩
-    is_bot = True
-    ML_SERVICE_USED = False  # 실제 ML 서비스 사용하지 않음
-    print(f"🧪 테스트 모드: 신뢰도={confidence_score}, 봇여부={is_bot}")
-    
-    # 원래 코드 (주석 처리)
-    # try:
-    #     response = httpx.post(ML_PREDICT_BOT_URL, json={"behavior_data": behavior_data})
-    #     response.raise_for_status()
-    #     result = response.json()
-    #     confidence_score = result.get("confidence_score", 50)
-    #     is_bot = result.get("is_bot", False)
-    #     ML_SERVICE_USED = True
-    #     print(f"🤖 ML API 결과: 신뢰도={confidence_score}, 봇여부={is_bot}")
-    # except Exception as e:
-    #     print(f"❌ ML 서비스 호출 실패: {e}")
-    #     confidence_score = 75
-    #     is_bot = False
-    #     ML_SERVICE_USED = False
+    try:
+        response = httpx.post(ML_PREDICT_BOT_URL, json={"behavior_data": behavior_data})
+        response.raise_for_status()
+        result = response.json()
+        confidence_score = result.get("confidence_score", 50)
+        is_bot = result.get("is_bot", False)
+        ML_SERVICE_USED = True
+        print(f"🤖 ML API 결과: 신뢰도={confidence_score}, 봇여부={is_bot}")
+    except Exception as e:
+        print(f"❌ ML 서비스 호출 실패: {e}")
+        confidence_score = 75
+        is_bot = False
+        ML_SERVICE_USED = False
 
     # 점수 저장: behavior_data의 생성된 correlation_id를 참조하여 별도 컬렉션에 저장
     # 모바일 환경에서는 저장하지 않음
