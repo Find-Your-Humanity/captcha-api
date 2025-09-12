@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any
 import json
 from datetime import datetime
 
-from database import verify_api_key, verify_domain_access, update_api_key_usage, log_request, get_db_connection, verify_captcha_token
+from database import verify_api_key, verify_domain_access, update_api_key_usage, log_request, get_db_connection, verify_captcha_token, verify_api_key_auto_secret, verify_api_key_with_secret
 
 router = APIRouter()
 
@@ -150,14 +150,18 @@ def verify_captcha(
     """
     start_time = datetime.now()
     
-    # API 키와 비밀 키 검증
-    if not x_api_key or not x_secret_key:
-        raise HTTPException(status_code=401, detail="API key and secret key required")
-    
-    # 공개 키와 비밀 키 쌍 검증
-    api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
-    if not api_key_info:
-        raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+    # 데모 키는 공개키만으로 허용, 일반 키는 공개+비밀 필요
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="API key required")
+    api_key_info = verify_api_key_auto_secret(x_api_key)
+    if api_key_info and api_key_info.get('is_demo'):
+        pass
+    else:
+        if not x_secret_key:
+            raise HTTPException(status_code=401, detail="API key and secret key required")
+        api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
+        if not api_key_info:
+            raise HTTPException(status_code=401, detail="Invalid API key or secret key")
     
     # 도메인 검증 (Origin 헤더 확인)
     # TODO: Origin 헤더 검증 로직 추가

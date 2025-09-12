@@ -345,6 +345,51 @@ def verify_captcha_token(token: str, api_key_id: int):
         print(f"캡차 토큰 검증 오류: {e}")
         return False, None
 
+def verify_api_key_auto_secret(api_key: str) -> dict:
+    """
+    공개 키만으로 검증 정보를 조회합니다. (비밀 키 비교 없음)
+    is_demo 플래그를 포함하여 반환합니다. 데모 모드에서 헤더 시크릿 없이 허용할 때 사용.
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT 
+                        ak.id, ak.user_id, ak.name, ak.is_active, ak.rate_limit_per_minute,
+                        ak.rate_limit_per_day, ak.usage_count, ak.last_used_at, ak.allowed_origins,
+                        ak.is_demo,
+                        u.email, us.plan_id, p.name AS plan_name
+                    FROM api_keys ak
+                    LEFT JOIN users u ON ak.user_id = u.id
+                    LEFT JOIN user_subscriptions us ON u.id = us.user_id
+                    LEFT JOIN plans p ON us.plan_id = p.id
+                    WHERE ak.key_id = %s AND ak.is_active = 1
+                    """,
+                    (api_key,),
+                )
+                result = cursor.fetchone()
+                if not result:
+                    return None
+                return {
+                    'api_key_id': result[0],
+                    'user_id': result[1],
+                    'key_name': result[2],
+                    'is_active': result[3],
+                    'rate_limit_per_minute': result[4],
+                    'rate_limit_per_day': result[5],
+                    'usage_count': result[6],
+                    'last_used_at': result[7],
+                    'allowed_origins': result[8],
+                    'is_demo': result[9],
+                    'user_email': result[10],
+                    'plan_id': result[11],
+                    'plan_name': result[12],
+                }
+    except Exception as e:
+        print(f"API 키 자동 조회 오류: {e}")
+        return None
+
 def update_api_key_usage(api_key_id: int, captcha_type: str = None):
     """
     API 키 사용량 업데이트 (캡차 타입별)
