@@ -9,6 +9,7 @@ from pathlib import Path
 import threading
 from bson import ObjectId
 import secrets
+import re
 
 from schemas.requests import CaptchaRequest
 from config.settings import (
@@ -95,9 +96,49 @@ def _get_behavior_mongo_client():
         _mongo_client_for_behavior = None
         return None
 
-def _save_behavior_to_mongo(doc: Dict[str, Any]) -> None:
+def _is_mobile_user_agent(user_agent: str) -> bool:
+    """
+    User-Agent 문자열을 분석하여 모바일/태블릿 환경인지 판단합니다.
+    """
+    if not user_agent:
+        print("⚠️ User-Agent가 비어있음")
+        return False
+    
+    # 모바일/태블릿 관련 키워드 패턴
+    mobile_patterns = [
+        r'mobile', r'android', r'iphone', r'ipad', r'ipod',
+        r'blackberry', r'windows phone', r'opera mini',
+        r'kindle', r'silk', r'webos', r'palm'
+    ]
+    
+    user_agent_lower = user_agent.lower()
+    matched_patterns = []
+    
+    for pattern in mobile_patterns:
+        if re.search(pattern, user_agent_lower):
+            matched_patterns.append(pattern)
+    
+    if matched_patterns:
+        print(f"🎯 모바일 패턴 매칭: {matched_patterns}")
+        return True
+    
+    print("💻 데스크톱 환경으로 판단")
+    return False
+
+
+def _save_behavior_to_mongo(doc: Dict[str, Any], user_agent: Optional[str] = None) -> None:
+    """
+    behavior_data를 MongoDB에 저장합니다.
+    모바일 환경에서는 저장하지 않습니다.
+    """
     if not SAVE_BEHAVIOR_TO_MONGO:
         return
+    
+    # 모바일 환경 감지 및 저장 건너뛰기
+    if _is_mobile_user_agent(user_agent or ""):
+        print("🛡️ 모바일 환경 감지: behavior_data MongoDB 저장 건너뜀")
+        return
+    
     client = _get_behavior_mongo_client()
     if not client or not BEHAVIOR_MONGO_DB or not BEHAVIOR_MONGO_COLLECTION:
         return
@@ -119,9 +160,15 @@ def _save_behavior_to_mongo(doc: Dict[str, Any]) -> None:
 def next_captcha(
     request: CaptchaRequest, 
     x_api_key: Optional[str] = Header(None),
-    x_secret_key: Optional[str] = Header(None)
+    x_secret_key: Optional[str] = Header(None),
+    user_agent: Optional[str] = Header(None)
 ):
     print(f"🚀 [/api/next-captcha] 요청 시작 - API Key: {x_api_key[:20] if x_api_key else 'None'}...")
+    
+    # User-Agent 디버깅 로그
+    print(f"🔍 User-Agent: {user_agent}")
+    is_mobile = _is_mobile_user_agent(user_agent or "")
+    print(f"📱 모바일 환경 감지: {is_mobile}")
     
     # API 키/시크릿 검증 (데모 모드 예외 허용: 공개키만으로 조회)
     if not x_api_key:
@@ -174,7 +221,7 @@ def next_captcha(
                 "behavior_data": behavior_data,
                 "createdAt": datetime.utcnow().isoformat(),
             }
-            _save_behavior_to_mongo(mongo_doc)
+            _save_behavior_to_mongo(mongo_doc, user_agent)
         except Exception:
             pass
         try:
@@ -187,7 +234,7 @@ def next_captcha(
             print(f"🔎 [/api/next-captcha] sample: {json.dumps(sample, ensure_ascii=False)[:800]}")
         except Exception:
             pass
-        if DEBUG_SAVE_BEHAVIOR_DATA:
+        if DEBUG_SAVE_BEHAVIOR_DATA and not _is_mobile_user_agent(user_agent or ""):
             try:
                 save_dir = Path(DEBUG_BEHAVIOR_DIR)
                 save_dir.mkdir(parents=True, exist_ok=True)
@@ -199,6 +246,8 @@ def next_captcha(
                 print(f"💾 [/api/next-captcha] saved behavior_data: {str(fpath.resolve())}")
             except Exception as e:
                 print(f"⚠️ failed to save behavior_data: {e}")
+        elif DEBUG_SAVE_BEHAVIOR_DATA and _is_mobile_user_agent(user_agent or ""):
+            print("🛡️ 모바일 환경 감지: behavior_data 파일 저장 건너뜀")
     except Exception:
         pass
 
@@ -217,17 +266,21 @@ def next_captcha(
         ML_SERVICE_USED = False
 
     # 점수 저장: behavior_data의 생성된 correlation_id를 참조하여 별도 컬렉션에 저장
-    try:
-        client = _get_behavior_mongo_client()
-        if client and BEHAVIOR_MONGO_DB:
-            # score는 basic_data_score 컬렉션에 저장
-            score_coll = client[BEHAVIOR_MONGO_DB]["behavior_data_score"]
-            score_coll.insert_one({
-                "behavior_data_id": correlation_id,
-                "confidence_score": confidence_score,
-            })
-    except Exception:
-        pass
+    # 모바일 환경에서는 저장하지 않음
+    if not _is_mobile_user_agent(user_agent or ""):
+        try:
+            client = _get_behavior_mongo_client()
+            if client and BEHAVIOR_MONGO_DB:
+                # score는 basic_data_score 컬렉션에 저장
+                score_coll = client[BEHAVIOR_MONGO_DB]["behavior_data_score"]
+                score_coll.insert_one({
+                    "behavior_data_id": correlation_id,
+                    "confidence_score": confidence_score,
+                })
+        except Exception:
+            pass
+    else:
+        print("🛡️ 모바일 환경 감지: behavior_data_score MongoDB 저장 건너뜀")
 
     # [계획된 로직 안내 - 아직 미적용]
     # 사용자 행동 데이터 신뢰도 점수(confidence_score)를 기준으로 다음 캡차 타입을 결정합니다.

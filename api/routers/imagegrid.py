@@ -15,9 +15,13 @@ router = APIRouter()
 @router.post("/api/image-challenge")
 def create_image_challenge(
     x_api_key: Optional[str] = Header(None),
-    x_secret_key: Optional[str] = Header(None)
+    x_secret_key: Optional[str] = Header(None),
+    user_agent: Optional[str] = Header(None)
 ) -> Dict[str, Any]:
     start_time = time.time()
+    
+    # User-Agent 디버깅 로그
+    print(f"🔍 [ImageCaptcha] User-Agent: {user_agent}")
     
     # API 키/시크릿 검증 (데모 키는 공개키만으로 허용)
     if not x_api_key:

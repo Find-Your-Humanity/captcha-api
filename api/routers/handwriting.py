@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from typing import Any, Dict, List, Optional
 import base64, uuid, time, json
 from datetime import datetime
@@ -180,11 +180,16 @@ async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
 
 
 @router.post("/api/handwriting-challenge")
-async def create_handwriting(x_api_key: Optional[str] = None) -> Dict[str, Any]:
+async def create_handwriting(
+    x_api_key: Optional[str] = None,
+    user_agent: Optional[str] = Header(None)
+) -> Dict[str, Any]:
     """abstract_manifest 컬렉션에서 임의의 클래스 하나를 고르고 해당 클래스의 키 5개를 샘플로 반환.
     - 반환하는 samples는 ASSET_BASE_URL이 설정된 경우 해당 프리픽스를 붙인 절대 URL로 변환
     - Redis에는 challenge_id와 함께 target_class를 저장하여 이후 검증 시 매칭
     """
+    # User-Agent 디버깅 로그
+    print(f"🔍 [HandwritingCaptcha] User-Agent: {user_agent}")
     samples: List[str] = []
     target_class = ""
 

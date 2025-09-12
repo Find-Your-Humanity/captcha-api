@@ -68,7 +68,10 @@ async def verify(req: AbstractVerifyRequest) -> Dict[str, Any]:
 
 
 @router.post("/api/abstract-captcha")
-def create() -> Dict[str, Any]:
+def create(user_agent: Optional[str] = Header(None)) -> Dict[str, Any]:
+    # User-Agent 디버깅 로그
+    print(f"🔍 [AbstractCaptcha] User-Agent: {user_agent}")
+    
     # 기존 main.py의 생성 로직을 라우터로 이관하여 서비스로 전달
     cls_list, class_dir_map, keyword_map = get_abstract_class_list(), get_class_dir_mapping(), get_keyword_map()
     if not cls_list:
