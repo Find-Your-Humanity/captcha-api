@@ -243,21 +243,21 @@ def next_captcha(
     # - 50 미만: 손글씨 캡차 → "handwritingcaptcha"
     #
     # 아래는 실제 적용 시 참고할 예시 코드입니다. (주석 처리)
-    if confidence_score >= 95:
-        next_captcha_value = None  # pass
-        captcha_type = "pass"
-    elif confidence_score >= 80:
-        next_captcha_value = "imagecaptcha"   # Basic
-        captcha_type = "image"
-    elif confidence_score >= 50:
-        next_captcha_value = "abstractcaptcha"
-        captcha_type = "abstract"
-    else:
-        next_captcha_value = "handwritingcaptcha"
-        captcha_type = "handwriting"
+    # if confidence_score >= 95:
+    #     next_captcha_value = None  # pass
+    #     captcha_type = "pass"
+    # elif confidence_score >= 80:
+    #     next_captcha_value = "imagecaptcha"   # Basic
+    #     captcha_type = "image"
+    # elif confidence_score >= 50:
+    #     next_captcha_value = "abstractcaptcha"
+    #     captcha_type = "abstract"
+    # else:
+    #     next_captcha_value = "handwritingcaptcha"
+    #     captcha_type = "handwriting"
 
-    # captcha_type = "handwriting"
-    # next_captcha_value = "handwritingcaptcha"
+    captcha_type = "image"
+    next_captcha_value = "imagecaptcha"
 
     # 안전 기본값 초기화 (예외 상황 방지)
     captcha_token: Optional[str] = None
