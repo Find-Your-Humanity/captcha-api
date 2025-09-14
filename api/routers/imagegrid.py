@@ -6,7 +6,7 @@ from services.imagegrid_service import create_imagegrid_challenge, verify_imageg
 from schemas.requests import ImageGridVerifyRequest
 from utils.usage import track_api_usage
 from database import log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
-from database import verify_api_key_with_secret, verify_api_key_auto_secret
+from database import verify_api_key_with_secret, verify_api_key_auto_secret, verify_captcha_token
 
 
 router = APIRouter()
@@ -142,20 +142,42 @@ def create_image_challenge(
 
 
 @router.post("/api/imagecaptcha-verify")
-async def verify_image_grid(req: ImageGridVerifyRequest) -> Dict[str, Any]:
+async def verify_image_grid(
+    req: ImageGridVerifyRequest,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    x_secret_key: Optional[str] = Header(None, alias="X-Secret-Key")
+) -> Dict[str, Any]:
     start_time = time.time()
     
+    # 1) API 키 및 비밀키 검증
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="API key required")
+    if not x_secret_key:
+        raise HTTPException(status_code=401, detail="Secret key required")
+    
+    api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
+    if not api_key_info:
+        raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+    
+    # 2) 캡차 토큰 검증
+    if not req.captcha_token:
+        raise HTTPException(status_code=400, detail="Captcha token required")
+    
+    token_valid = verify_captcha_token(req.captcha_token, api_key_info['api_key_id'])
+    if not token_valid:
+        raise HTTPException(status_code=400, detail="Invalid or expired captcha token")
+    
+    # 3) 이미지 캡차 검증
     result = verify_imagegrid(req.challenge_id, req.selections)
     
     # DB 로깅: 성공/실패 요청
-    if req.api_key:
-        status_code = 200 if result.get("success") else 400
-        await track_api_usage(
-            api_key=req.api_key,
-            endpoint="/api/imagecaptcha-verify",
-            status_code=status_code,
-            response_time=int((time.time() - start_time) * 1000)
-        )
+    status_code = 200 if result.get("success") else 400
+    await track_api_usage(
+        api_key=x_api_key,
+        endpoint="/api/imagecaptcha-verify",
+        status_code=status_code,
+        response_time=int((time.time() - start_time) * 1000)
+    )
     
     return result
 

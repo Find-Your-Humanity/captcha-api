@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Header
+from database import verify_captcha_token
 from typing import Any, Dict, List, Optional
 import os, random, time, mimetypes
 from pathlib import Path
@@ -34,35 +35,56 @@ router = APIRouter()
 
 
 @router.post("/api/abstract-verify")
-async def verify(req: AbstractVerifyRequest) -> Dict[str, Any]:
+async def verify(
+    req: AbstractVerifyRequest,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    x_secret_key: Optional[str] = Header(None, alias="X-Secret-Key")
+) -> Dict[str, Any]:
     start_time = time.time()
     
-    # signatures가 포함되면 무결성 검증
+    # 1) API 키 및 비밀키 검증
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="API key required")
+    if not x_secret_key:
+        raise HTTPException(status_code=401, detail="Secret key required")
+    
+    from database import verify_api_key_with_secret
+    api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
+    if not api_key_info:
+        raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+    
+    # 2) 캡차 토큰 검증
+    if not req.captcha_token:
+        raise HTTPException(status_code=400, detail="Captcha token required")
+    
+    token_valid = verify_captcha_token(req.captcha_token, api_key_info['api_key_id'])
+    if not token_valid:
+        raise HTTPException(status_code=400, detail="Invalid or expired captcha token")
+    
+    # 3) signatures가 포함되면 무결성 검증
     if req.signatures is not None:
         # 라우터 레벨에서 간단 길이 검증 (실제 길이는 서비스 내부 doc/image_urls 기반으로 재확인)
         for i, sig in enumerate(req.signatures):
             if not isinstance(sig, str):
                 # DB 로깅: 서명 검증 실패
-                if req.api_key:
-                    await track_api_usage(
-                        api_key=req.api_key,
-                        endpoint="/api/abstract-verify",
-                        status_code=400,
-                        response_time=int((time.time() - start_time) * 1000)
-                    )
+                await track_api_usage(
+                    api_key=x_api_key,
+                    endpoint="/api/abstract-verify",
+                    status_code=400,
+                    response_time=int((time.time() - start_time) * 1000)
+                )
                 return {"success": False, "message": "Invalid signature type"}
     
-    result = verify_abstract(req.challenge_id, req.selections, user_id=req.user_id, api_key=req.api_key)
+    result = verify_abstract(req.challenge_id, req.selections, user_id=req.user_id, api_key=x_api_key)
     
     # DB 로깅: 성공/실패 요청
-    if req.api_key:
-        status_code = 200 if result.get("success") else 400
-        await track_api_usage(
-            api_key=req.api_key,
-            endpoint="/api/abstract-verify",
-            status_code=status_code,
-            response_time=int((time.time() - start_time) * 1000)
-        )
+    status_code = 200 if result.get("success") else 400
+    await track_api_usage(
+        api_key=x_api_key,
+        endpoint="/api/abstract-verify",
+        status_code=status_code,
+        response_time=int((time.time() - start_time) * 1000)
+    )
     
     return result
 

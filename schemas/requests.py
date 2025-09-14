@@ -8,6 +8,7 @@ class CaptchaRequest(BaseModel):
 
 
 class HandwritingVerifyRequest(BaseModel):
+    captcha_token: str  # 캡차 토큰 필수
     image_base64: str
     challenge_id: Optional[str] = None
     user_id: Optional[int] = None
@@ -15,6 +16,7 @@ class HandwritingVerifyRequest(BaseModel):
 
 
 class AbstractVerifyRequest(BaseModel):
+    captcha_token: str  # 캡차 토큰 필수
     challenge_id: str
     selections: List[int]
     user_id: Optional[int] = None
@@ -23,6 +25,7 @@ class AbstractVerifyRequest(BaseModel):
 
 
 class ImageGridVerifyRequest(BaseModel):
+    captcha_token: str  # 캡차 토큰 필수
     challenge_id: str
     selections: List[int]
     user_id: Optional[int] = None
