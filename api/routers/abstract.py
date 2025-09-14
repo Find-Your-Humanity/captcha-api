@@ -68,9 +68,40 @@ async def verify(req: AbstractVerifyRequest) -> Dict[str, Any]:
 
 
 @router.post("/api/abstract-captcha")
-def create(user_agent: Optional[str] = Header(None)) -> Dict[str, Any]:
+def create(
+    x_api_key: Optional[str] = Header(None),
+    x_secret_key: Optional[str] = Header(None),
+    user_agent: Optional[str] = Header(None)
+) -> Dict[str, Any]:
     # User-Agent 디버깅 로그
     print(f"🔍 [AbstractCaptcha] User-Agent: {user_agent}")
+    
+    # API 키 검증 (선택사항이지만 있으면 검증)
+    if x_api_key:
+        # 데모 키 하드코딩 (홈페이지 데모용)
+        DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
+        
+        if x_api_key == DEMO_PUBLIC_KEY:
+            from database import verify_api_key_auto_secret, verify_api_key_with_secret
+            api_key_info = verify_api_key_auto_secret(x_api_key)
+            if not api_key_info or not api_key_info.get('is_demo'):
+                raise HTTPException(status_code=401, detail="Invalid demo api key")
+            print(f"🎯 데모 모드(DB): {DEMO_PUBLIC_KEY} 사용")
+        else:
+            from database import verify_api_key_auto_secret, verify_api_key_with_secret
+            # 일반: 챌린지 요청은 공개키만, 최종 검증은 공개키+비밀키
+            if not x_secret_key:
+                # 2단계: 공개키만으로 챌린지 요청 (브라우저에서 직접 호출)
+                api_key_info = verify_api_key_auto_secret(x_api_key)
+                if not api_key_info:
+                    raise HTTPException(status_code=401, detail="Invalid API key")
+                print(f"🌐 챌린지 요청 모드: {x_api_key[:20]}... (공개키만)")
+            else:
+                # 4단계: 공개키+비밀키로 최종 검증 (사용자 서버에서 호출)
+                api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
+                if not api_key_info:
+                    raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+                print(f"🔐 최종 검증 모드: {x_api_key[:20]}... (공개키+비밀키)")
     
     # 기존 main.py의 생성 로직을 라우터로 이관하여 서비스로 전달
     cls_list, class_dir_map, keyword_map = get_abstract_class_list(), get_class_dir_mapping(), get_keyword_map()

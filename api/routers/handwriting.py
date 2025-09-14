@@ -7,6 +7,7 @@ import httpx
 
 from services.handwriting_service import verify_handwriting, create_handwriting_challenge
 from schemas.requests import HandwritingVerifyRequest
+from database import verify_api_key_with_secret, verify_api_key_auto_secret
 from config.settings import (
     CAPTCHA_TTL,
     USE_REDIS,
@@ -181,7 +182,8 @@ async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
 
 @router.post("/api/handwriting-challenge")
 async def create_handwriting(
-    x_api_key: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None),
+    x_secret_key: Optional[str] = Header(None),
     user_agent: Optional[str] = Header(None)
 ) -> Dict[str, Any]:
     """abstract_manifest 컬렉션에서 임의의 클래스 하나를 고르고 해당 클래스의 키 5개를 샘플로 반환.
@@ -190,6 +192,31 @@ async def create_handwriting(
     """
     # User-Agent 디버깅 로그
     print(f"🔍 [HandwritingCaptcha] User-Agent: {user_agent}")
+    
+    # API 키 검증 (선택사항이지만 있으면 검증)
+    if x_api_key:
+        # 데모 키 하드코딩 (홈페이지 데모용)
+        DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
+        
+        if x_api_key == DEMO_PUBLIC_KEY:
+            api_key_info = verify_api_key_auto_secret(x_api_key)
+            if not api_key_info or not api_key_info.get('is_demo'):
+                raise HTTPException(status_code=401, detail="Invalid demo api key")
+            print(f"🎯 데모 모드(DB): {DEMO_PUBLIC_KEY} 사용")
+        else:
+            # 일반: 챌린지 요청은 공개키만, 최종 검증은 공개키+비밀키
+            if not x_secret_key:
+                # 2단계: 공개키만으로 챌린지 요청 (브라우저에서 직접 호출)
+                api_key_info = verify_api_key_auto_secret(x_api_key)
+                if not api_key_info:
+                    raise HTTPException(status_code=401, detail="Invalid API key")
+                print(f"🌐 챌린지 요청 모드: {x_api_key[:20]}... (공개키만)")
+            else:
+                # 4단계: 공개키+비밀키로 최종 검증 (사용자 서버에서 호출)
+                api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
+                if not api_key_info:
+                    raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+                print(f"🔐 최종 검증 모드: {x_api_key[:20]}... (공개키+비밀키)")
     samples: List[str] = []
     target_class = ""
 
