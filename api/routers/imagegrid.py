@@ -149,15 +149,28 @@ async def verify_image_grid(
 ) -> Dict[str, Any]:
     start_time = time.time()
     
-    # 1) API 키 및 비밀키 검증
+    # 1) API 키 검증
     if not x_api_key:
         raise HTTPException(status_code=401, detail="API key required")
-    if not x_secret_key:
-        raise HTTPException(status_code=401, detail="Secret key required")
     
-    api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
-    if not api_key_info:
-        raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+    # 데모 키 하드코딩 (홈페이지 데모용)
+    DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
+    
+    if x_api_key == DEMO_PUBLIC_KEY:
+        # 데모 키: 공개키만으로 검증 (브라우저에서 직접 호출)
+        api_key_info = verify_api_key_auto_secret(x_api_key)
+        if not api_key_info or not api_key_info.get('is_demo'):
+            raise HTTPException(status_code=401, detail="Invalid demo API key")
+        print(f"🎯 데모 모드 캡차 검증: {DEMO_PUBLIC_KEY} 사용")
+    else:
+        # 일반 키: 공개키+비밀키 검증 (사용자 서버에서 호출)
+        if not x_secret_key:
+            raise HTTPException(status_code=401, detail="Secret key required for non-demo keys")
+        
+        api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
+        if not api_key_info:
+            raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+        print(f"🔒 일반 모드 캡차 검증: {x_api_key[:20]}... 사용")
     
     # 2) 캡차 토큰 검증
     if not req.captcha_token:
