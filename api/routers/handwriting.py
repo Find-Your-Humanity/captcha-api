@@ -7,6 +7,7 @@ import httpx
 
 from services.handwriting_service import verify_handwriting, create_handwriting_challenge
 from schemas.requests import HandwritingVerifyRequest
+from database import verify_api_key_with_secret, verify_api_key_auto_secret, verify_captcha_token
 from config.settings import (
     CAPTCHA_TTL,
     USE_REDIS,
@@ -29,9 +30,45 @@ router = APIRouter()
 
 
 @router.post("/api/handwriting-verify")
-async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
+async def verify(
+    req: HandwritingVerifyRequest,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    x_secret_key: Optional[str] = Header(None, alias="X-Secret-Key")
+) -> Dict[str, Any]:
     start_time = time.time()
-    # 1) Base64 디코드 (data:image 접두 처리)
+    
+    # 1) API 키 검증
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="API key required")
+    
+    # 데모 키 하드코딩 (홈페이지 데모용)
+    DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
+    
+    if x_api_key == DEMO_PUBLIC_KEY:
+        # 데모 키: 공개키만으로 검증 (브라우저에서 직접 호출)
+        api_key_info = verify_api_key_auto_secret(x_api_key)
+        if not api_key_info or not api_key_info.get('is_demo'):
+            raise HTTPException(status_code=401, detail="Invalid demo API key")
+        print(f"🎯 데모 모드 캡차 검증: {DEMO_PUBLIC_KEY} 사용")
+    else:
+        # 일반 키: 공개키+비밀키 검증 (사용자 서버에서 호출)
+        if not x_secret_key:
+            raise HTTPException(status_code=401, detail="Secret key required for non-demo keys")
+        
+        api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
+        if not api_key_info:
+            raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+        print(f"🔒 일반 모드 캡차 검증: {x_api_key[:20]}... 사용")
+    
+    # 2) 캡차 토큰 검증
+    if not req.captcha_token:
+        raise HTTPException(status_code=400, detail="Captcha token required")
+    
+    token_valid = verify_captcha_token(req.captcha_token, api_key_info['api_key_id'])
+    if not token_valid:
+        raise HTTPException(status_code=400, detail="Invalid or expired captcha token")
+    
+    # 3) Base64 디코드 (data:image 접두 처리)
     base64_str = req.image_base64 or ""
     if base64_str.startswith("data:image"):
         base64_str = base64_str.split(",", 1)[1]
@@ -39,13 +76,12 @@ async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
         image_bytes = base64.b64decode(base64_str)
     except Exception as e:
         # DB 로깅: 실패한 요청
-        if req.api_key:
-            await track_api_usage(
-                api_key=req.api_key,
-                endpoint="/api/handwriting-verify",
-                status_code=400,
-                response_time=int((time.time() - start_time) * 1000)
-            )
+        await track_api_usage(
+            api_key=x_api_key,
+            endpoint="/api/handwriting-verify",
+            status_code=400,
+            response_time=int((time.time() - start_time) * 1000)
+        )
         return {"success": False, "message": f"Invalid base64 image: {e}"}
 
     # 디버그 저장
@@ -64,13 +100,12 @@ async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
     # 2) OCR API 호출
     if not OCR_API_URL:
         # DB 로깅: 설정 오류
-        if req.api_key:
-            await track_api_usage(
-                api_key=req.api_key,
-                endpoint="/api/handwriting-verify",
-                status_code=500,
-                response_time=int((time.time() - start_time) * 1000)
-            )
+        await track_api_usage(
+            api_key=x_api_key,
+            endpoint="/api/handwriting-verify",
+            status_code=500,
+            response_time=int((time.time() - start_time) * 1000)
+        )
         return {"success": False, "message": "OCR_API_URL is not configured on server."}
 
     def _call_ocr_multipart(lexicon_list: Optional[List[str]] = None):
@@ -102,13 +137,12 @@ async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
         ocr_json = resp.json()
     except Exception as e:
         # DB 로깅: OCR 실패
-        if req.api_key:
-            await track_api_usage(
-                api_key=req.api_key,
-                endpoint="/api/handwriting-verify",
-                status_code=500,
-                response_time=int((time.time() - start_time) * 1000)
-            )
+        await track_api_usage(
+            api_key=x_api_key,
+            endpoint="/api/handwriting-verify",
+            status_code=500,
+            response_time=int((time.time() - start_time) * 1000)
+        )
         return {"success": False, "message": f"OCR API request failed: {e}"}
 
     # 3) 텍스트 추출 및 정규화
@@ -121,13 +155,12 @@ async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
         )
     if not extracted or not isinstance(extracted, str):
         # DB 로깅: OCR 응답 오류
-        if req.api_key:
-            await track_api_usage(
-                api_key=req.api_key,
-                endpoint="/api/handwriting-verify",
-                status_code=500,
-                response_time=int((time.time() - start_time) * 1000)
-            )
+        await track_api_usage(
+            api_key=x_api_key,
+            endpoint="/api/handwriting-verify",
+            status_code=500,
+            response_time=int((time.time() - start_time) * 1000)
+        )
         return {"success": False, "message": "OCR API response missing text field"}
 
     text_norm = normalize_text(extracted)
@@ -153,7 +186,7 @@ async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
         print(f"❌ [handwriting-verify] Redis 조회 오류: {e}")
         target_class_dbg = None
 
-    result = verify_handwriting(req.challenge_id or "", text_norm, user_id=req.user_id, api_key=req.api_key)
+    result = verify_handwriting(req.challenge_id or "", text_norm, user_id=req.user_id, api_key=x_api_key)
 
     # 디버깅 로그: 예측값 vs 정답 클래스, 매칭 결과
     try:
@@ -165,14 +198,13 @@ async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
         pass
     
     # DB 로깅: 성공/실패 요청
-    if req.api_key:
-        status_code = 200 if result.get("success") else 400
-        await track_api_usage(
-            api_key=req.api_key,
-            endpoint="/api/handwriting-verify",
-            status_code=status_code,
-            response_time=int((time.time() - start_time) * 1000)
-        )
+    status_code = 200 if result.get("success") else 400
+    await track_api_usage(
+        api_key=x_api_key,
+        endpoint="/api/handwriting-verify",
+        status_code=status_code,
+        response_time=int((time.time() - start_time) * 1000)
+    )
     
     if result.get("success") and SUCCESS_REDIRECT_URL:
         result["redirect_url"] = SUCCESS_REDIRECT_URL
@@ -181,7 +213,8 @@ async def verify(req: HandwritingVerifyRequest) -> Dict[str, Any]:
 
 @router.post("/api/handwriting-challenge")
 async def create_handwriting(
-    x_api_key: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None),
+    x_secret_key: Optional[str] = Header(None),
     user_agent: Optional[str] = Header(None)
 ) -> Dict[str, Any]:
     """abstract_manifest 컬렉션에서 임의의 클래스 하나를 고르고 해당 클래스의 키 5개를 샘플로 반환.
@@ -190,6 +223,31 @@ async def create_handwriting(
     """
     # User-Agent 디버깅 로그
     print(f"🔍 [HandwritingCaptcha] User-Agent: {user_agent}")
+    
+    # API 키 검증 (선택사항이지만 있으면 검증)
+    if x_api_key:
+        # 데모 키 하드코딩 (홈페이지 데모용)
+        DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
+        
+        if x_api_key == DEMO_PUBLIC_KEY:
+            api_key_info = verify_api_key_auto_secret(x_api_key)
+            if not api_key_info or not api_key_info.get('is_demo'):
+                raise HTTPException(status_code=401, detail="Invalid demo api key")
+            print(f"🎯 데모 모드(DB): {DEMO_PUBLIC_KEY} 사용")
+        else:
+            # 일반: 챌린지 요청은 공개키만, 최종 검증은 공개키+비밀키
+            if not x_secret_key:
+                # 2단계: 공개키만으로 챌린지 요청 (브라우저에서 직접 호출)
+                api_key_info = verify_api_key_auto_secret(x_api_key)
+                if not api_key_info:
+                    raise HTTPException(status_code=401, detail="Invalid API key")
+                print(f"🌐 챌린지 요청 모드: {x_api_key[:20]}... (공개키만)")
+            else:
+                # 4단계: 공개키+비밀키로 최종 검증 (사용자 서버에서 호출)
+                api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
+                if not api_key_info:
+                    raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+                print(f"🔐 최종 검증 모드: {x_api_key[:20]}... (공개키+비밀키)")
     samples: List[str] = []
     target_class = ""
 
