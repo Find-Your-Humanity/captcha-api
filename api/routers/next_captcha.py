@@ -347,28 +347,28 @@ def next_captcha(
         next_captcha_value = None  # 다음 캡차 없음
         captcha_type = "pass"      # 통과 처리
     else:
-        #   # 데스크톱 환경: 신뢰도 점수에 따른 캡차 타입 결정
-        # if confidence_score >= 90:
-        #     next_captcha_value = None  # pass
-        #     captcha_type = "pass"
-        # elif confidence_score >= 60:
-        #     next_captcha_value = "imagecaptcha"   # Basic
-        #     captcha_type = "image"
-        # elif confidence_score >= 40:
-        #     next_captcha_value = "abstractcaptcha"
-        #     captcha_type = "abstract"
-        # elif confidence_score >= 10:
-        #     next_captcha_value = "handwritingcaptcha"
-        #     captcha_type = "handwriting"
-        # else:   
-        #     # confidence_score 9 이하: 봇일 확률 높음, 시도 횟수 제한 적용
-        #     print(f"⚠️ 낮은 신뢰도 점수: {confidence_score}, 시도 횟수: {session_data.get('low_score_attempts', 0) if session_data else 0}")
-        #     next_captcha_value = ""  # 캡차 비활성화
-        #     captcha_type = ""
+          # 데스크톱 환경: 신뢰도 점수에 따른 캡차 타입 결정
+        if confidence_score >= 90:
+            next_captcha_value = None  # pass
+            captcha_type = "pass"
+        elif confidence_score >= 60:
+            next_captcha_value = "imagecaptcha"   # Basic
+            captcha_type = "image"
+        elif confidence_score >= 40:
+            next_captcha_value = "abstractcaptcha"
+            captcha_type = "abstract"
+        elif confidence_score >= 10:
+            next_captcha_value = "handwritingcaptcha"
+            captcha_type = "handwriting"
+        else:   
+            # confidence_score 9 이하: 봇일 확률 높음, 시도 횟수 제한 적용
+            print(f"⚠️ 낮은 신뢰도 점수: {confidence_score}, 시도 횟수: {session_data.get('low_score_attempts', 0) if session_data else 0}")
+            next_captcha_value = ""  # 캡차 비활성화
+            captcha_type = ""
         # 데스크톱 환경: 모든 경우에 handwritingcaptcha로 설정
-        print(f"🎯 모든 경우에 handwritingcaptcha로 설정 (신뢰도: {confidence_score})")
-        next_captcha_value = "handwritingcaptcha"
-        captcha_type = "handwriting"
+        # print(f"🎯 모든 경우에 handwritingcaptcha로 설정 (신뢰도: {confidence_score})")
+        # next_captcha_value = "handwritingcaptcha"
+        # captcha_type = "handwriting"
 
     # 안전 기본값 초기화 (예외 상황 방지)
     captcha_token: Optional[str] = None
