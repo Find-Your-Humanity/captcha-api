@@ -215,19 +215,7 @@ def next_captcha(
     if api_key_info.get('is_demo', False):
         print("🎯 데모 모드: 발급 단계에서 사용량 업데이트 없음")
         
-        # 데모 키인 경우 바로 성공으로 처리 (캡차 건너뛰기)
-        return {
-            "message": "Demo mode - captcha bypassed",
-            "status": "success",
-            "confidence_score": 100,
-            "captcha_type": "demo",
-            "next_captcha": None,  # 캡차 없이 바로 성공
-            "captcha_token": f"demo_token_{secrets.token_urlsafe(16)}",
-            "behavior_data_received": True,
-            "ml_service_used": False,
-            "is_bot_detected": False,
-            "session_id": request.session_id or str(uuid.uuid4())
-        }
+        # 데모 키도 실제 캡차 발급 진행
     
     # 체크박스 세션 생성 또는 조회
     checkbox_session_id = request.session_id or str(uuid.uuid4())

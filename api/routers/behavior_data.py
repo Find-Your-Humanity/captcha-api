@@ -108,3 +108,4 @@ def save_writing_behavior(
         print("⚠️ MongoDB 클라이언트가 없거나 설정되지 않음")
     
     return {"status": "success", "message": "Writing behavior data saved"}
+

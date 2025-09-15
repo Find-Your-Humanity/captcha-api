@@ -162,6 +162,8 @@ async def verify_image_grid(
         if not api_key_info or not api_key_info.get('is_demo'):
             raise HTTPException(status_code=401, detail="Invalid demo API key")
         print(f"🎯 데모 모드 캡차 검증: {DEMO_PUBLIC_KEY} 사용")
+        
+        # 데모 키도 실제 캡차 검증 진행
     else:
         # 일반 키: 공개키+비밀키 검증 (사용자 서버에서 호출)
         if not x_secret_key:
