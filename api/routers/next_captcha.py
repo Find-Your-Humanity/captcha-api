@@ -214,6 +214,20 @@ def next_captcha(
     # 사용량 집계는 검증 단계(/api/verify-captcha)에서 타입별로 처리합니다.
     if api_key_info.get('is_demo', False):
         print("🎯 데모 모드: 발급 단계에서 사용량 업데이트 없음")
+        
+        # 데모 키인 경우 바로 성공으로 처리 (캡차 건너뛰기)
+        return {
+            "message": "Demo mode - captcha bypassed",
+            "status": "success",
+            "confidence_score": 100,
+            "captcha_type": "demo",
+            "next_captcha": None,  # 캡차 없이 바로 성공
+            "captcha_token": f"demo_token_{secrets.token_urlsafe(16)}",
+            "behavior_data_received": True,
+            "ml_service_used": False,
+            "is_bot_detected": False,
+            "session_id": request.session_id or str(uuid.uuid4())
+        }
     
     # 체크박스 세션 생성 또는 조회
     checkbox_session_id = request.session_id or str(uuid.uuid4())
@@ -365,8 +379,8 @@ def next_captcha(
         #     captcha_type = ""
         # 데스크톱 환경: 모든 경우에 handwritingcaptcha로 설정
         print(f"🎯 모든 경우에 handwritingcaptcha로 설정 (신뢰도: {confidence_score})")
-        next_captcha_value = "imagecaptcha"
-        captcha_type = "image"
+        next_captcha_value = "handwritingcaptcha"
+        captcha_type = "handwriting"
 
     # 안전 기본값 초기화 (예외 상황 방지)
     captcha_token: Optional[str] = None
