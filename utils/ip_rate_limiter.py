@@ -179,7 +179,6 @@ class IPRateLimiter:
             # 기존 데이터 가져오기
             existing_data = self.redis.get(suspicious_key)
             if existing_data:
-                import json
                 data = json.loads(existing_data)
                 data['violations'].append(details)
                 data['last_violation'] = current_time
