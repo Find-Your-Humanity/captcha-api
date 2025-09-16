@@ -190,7 +190,7 @@ def next_captcha(
     try:
         ip_rate_limit_result = ip_rate_limiter.check_ip_rate_limit(
             ip_address=client_ip,
-            rate_limit_per_minute=30,  # IP당 분당 30회
+            rate_limit_per_minute=10,  # IP당 분당 10회 (테스트용)
             rate_limit_per_hour=500,   # IP당 시간당 500회
             rate_limit_per_day=2000,   # IP당 일당 2000회
             api_key=x_api_key          # API 키 전달 (MySQL 저장용)
