@@ -269,6 +269,21 @@ def next_captcha(
         
     except HTTPException as e:
         print(f"❌ Rate Limiting 초과: {e.detail}")
+        try:
+            # API 키 기반 제한 초과도 의심 IP로 MySQL에 저장
+            now_ts = int(datetime.utcnow().timestamp())
+            ip_rate_limiter._save_suspicious_ip_to_mysql(
+                ip_address=client_ip,
+                data={
+                    'violation_count': 1,
+                    'first_detected': now_ts,
+                    'last_violation': now_ts,
+                    'is_blocked': False,
+                },
+                api_key=x_api_key or ''
+            )
+        except Exception as _e:
+            print(f"⚠️ API 키 제한 초과 저장 실패(무시): {_e}")
         raise e
     except Exception as e:
         print(f"⚠️ Rate Limiting 오류 (요청 허용): {e}")
