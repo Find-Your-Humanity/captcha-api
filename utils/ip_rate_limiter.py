@@ -18,19 +18,27 @@ class IPRateLimiter:
         """클라이언트 IP 주소를 추출합니다."""
         # X-Forwarded-For 헤더 확인 (프록시/로드밸런서 환경)
         forwarded_for = request.headers.get("X-Forwarded-For")
+        print(f"🔍 X-Forwarded-For 헤더: {forwarded_for}")
         if forwarded_for:
             # 첫 번째 IP가 실제 클라이언트 IP
-            return forwarded_for.split(",")[0].strip()
+            client_ip = forwarded_for.split(",")[0].strip()
+            print(f"✅ X-Forwarded-For에서 추출된 IP: {client_ip}")
+            return client_ip
         
         # X-Real-IP 헤더 확인
         real_ip = request.headers.get("X-Real-IP")
+        print(f"🔍 X-Real-IP 헤더: {real_ip}")
         if real_ip:
+            print(f"✅ X-Real-IP에서 추출된 IP: {real_ip.strip()}")
             return real_ip.strip()
         
         # 직접 연결된 클라이언트 IP
         if hasattr(request, 'client') and request.client:
-            return request.client.host
+            client_ip = request.client.host
+            print(f"✅ 직접 연결된 클라이언트 IP: {client_ip}")
+            return client_ip
         
+        print(f"❌ IP를 찾을 수 없음, unknown 반환")
         return "unknown"
     
     def check_ip_rate_limit(
