@@ -34,14 +34,14 @@ def _get_behavior_mongo_client():
 def save_image_behavior(
     request: ImageBehaviorRequest,
     x_api_key: Optional[str] = Header(None),
-    is_bot: Optional[str] = Header(None, alias="is_bot")
+    is_bot_header: Optional[str] = Header(None, alias="is_bot")
 ):
     """이미지 선택 행동 데이터를 MongoDB에 저장 (image/abstract 공통)"""
     print(f"🚀 [/api/behavior-data/image] 요청 시작 - 캡차 타입: {request.captcha_type}")
     
     # 봇 여부 확인
-    is_bot_request = is_bot and is_bot.lower() == 'true'
-    print(f"🤖 봇 헤더 값: '{is_bot}' -> 봇 요청 여부: {is_bot_request}")
+    is_bot_request = is_bot_header and is_bot_header.lower() == 'true'
+    print(f"🤖 봇 헤더 값: '{is_bot_header}' -> 봇 요청 여부: {is_bot_request}")
     if is_bot_request:
         print("🚨 봇 요청 감지! 이미지 캡차 봇 전용 컬렉션에 저장됩니다.")
     
@@ -89,14 +89,14 @@ def save_image_behavior(
 def save_writing_behavior(
     request: WritingBehaviorRequest,
     x_api_key: Optional[str] = Header(None),
-    is_bot: Optional[str] = Header(None, alias="is_bot")
+    is_bot_header: Optional[str] = Header(None, alias="is_bot")
 ):
     """손글씨 행동 데이터를 MongoDB에 저장"""
     print(f"🚀 [/api/behavior-data/writing] 요청 시작")
     
     # 봇 여부 확인
-    is_bot_request = is_bot and is_bot.lower() == 'true'
-    print(f"🤖 봇 헤더 값: '{is_bot}' -> 봇 요청 여부: {is_bot_request}")
+    is_bot_request = is_bot_header and is_bot_header.lower() == 'true'
+    print(f"🤖 봇 헤더 값: '{is_bot_header}' -> 봇 요청 여부: {is_bot_request}")
     if is_bot_request:
         print("🚨 봇 요청 감지! 손글씨 캡차 봇 전용 컬렉션에 저장됩니다.")
     

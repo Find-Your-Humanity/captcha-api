@@ -181,7 +181,7 @@ def next_captcha(
     x_secret_key: Optional[str] = Header(None),
     user_agent: Optional[str] = Header(None),
     http_request: Request = None,
-    is_bot: Optional[str] = Header(None, alias="is_bot")
+    is_bot_header: Optional[str] = Header(None, alias="is_bot")
 ):
     print(f"🚀 [/api/next-captcha] 요청 시작 - API Key: {x_api_key[:20] if x_api_key else 'None'}...")
     
@@ -189,8 +189,8 @@ def next_captcha(
     print(f"🔍 모든 헤더: {dict(http_request.headers) if http_request else 'None'}")
     
     # 봇 여부 확인 및 디버깅
-    is_bot_request = is_bot and is_bot.lower() == 'true'
-    print(f"🤖 봇 헤더 값: '{is_bot}' -> 봇 요청 여부: {is_bot_request}")
+    is_bot_request = is_bot_header and is_bot_header.lower() == 'true'
+    print(f"🤖 봇 헤더 값: '{is_bot_header}' -> 봇 요청 여부: {is_bot_request}")
     if is_bot_request:
         print("🚨 봇 요청 감지! 봇 전용 컬렉션에 저장됩니다.")
     
