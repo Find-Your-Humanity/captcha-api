@@ -199,10 +199,11 @@ def next_captcha(
     print(f"🌐 클라이언트 IP: {client_ip}")
     
     # IP 기반 Rate Limiting 체크
+    print(f"🔍 IP Rate Limiting 시작: IP={client_ip}, API_KEY={x_api_key[:20] if x_api_key else 'None'}...")
     try:
         ip_rate_limit_result = ip_rate_limiter.check_ip_rate_limit(
             ip_address=client_ip,
-            rate_limit_per_minute=30,  # IP당 분당 30회
+            rate_limit_per_minute=10,  # IP당 분당 10회 (테스트용)
             rate_limit_per_hour=500,   # IP당 시간당 500회
             rate_limit_per_day=2000,   # IP당 일당 2000회
             api_key=x_api_key          # API 키 전달 (MySQL 저장용)

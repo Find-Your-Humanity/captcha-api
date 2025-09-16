@@ -18,19 +18,27 @@ class IPRateLimiter:
         """클라이언트 IP 주소를 추출합니다."""
         # X-Forwarded-For 헤더 확인 (프록시/로드밸런서 환경)
         forwarded_for = request.headers.get("X-Forwarded-For")
+        print(f"🔍 X-Forwarded-For 헤더: {forwarded_for}")
         if forwarded_for:
             # 첫 번째 IP가 실제 클라이언트 IP
-            return forwarded_for.split(",")[0].strip()
+            client_ip = forwarded_for.split(",")[0].strip()
+            print(f"✅ X-Forwarded-For에서 추출된 IP: {client_ip}")
+            return client_ip
         
         # X-Real-IP 헤더 확인
         real_ip = request.headers.get("X-Real-IP")
+        print(f"🔍 X-Real-IP 헤더: {real_ip}")
         if real_ip:
+            print(f"✅ X-Real-IP에서 추출된 IP: {real_ip.strip()}")
             return real_ip.strip()
         
         # 직접 연결된 클라이언트 IP
         if hasattr(request, 'client') and request.client:
-            return request.client.host
+            client_ip = request.client.host
+            print(f"✅ 직접 연결된 클라이언트 IP: {client_ip}")
+            return client_ip
         
+        print(f"❌ IP를 찾을 수 없음, unknown 반환")
         return "unknown"
     
     def check_ip_rate_limit(
@@ -179,7 +187,6 @@ class IPRateLimiter:
             # 기존 데이터 가져오기
             existing_data = self.redis.get(suspicious_key)
             if existing_data:
-                import json
                 data = json.loads(existing_data)
                 data['violations'].append(details)
                 data['last_violation'] = current_time
@@ -211,6 +218,7 @@ class IPRateLimiter:
     
     def _save_suspicious_ip_to_mysql(self, ip_address: str, data: Dict[str, Any], api_key: str):
         """의심스러운 IP 정보를 MySQL에 저장합니다."""
+        print(f"🔍 MySQL 저장 시작: IP={ip_address}, API_KEY={api_key[:20] if api_key else 'None'}...")
         try:
             with get_db_connection() as conn:
                 with conn.cursor() as cursor:
@@ -253,9 +261,11 @@ class IPRateLimiter:
                     """, (api_key, api_key, api_key, api_key, api_key))
                     
                     conn.commit()
+                    print(f"✅ MySQL 저장 성공: IP={ip_address}, API_KEY={api_key[:20] if api_key else 'None'}...")
                     logger.info(f"Saved suspicious IP {ip_address} to MySQL for API key {api_key}")
                     
         except Exception as e:
+            print(f"❌ MySQL 저장 실패: IP={ip_address}, 오류={e}")
             logger.error(f"Failed to save suspicious IP {ip_address} to MySQL: {e}")
     
     def get_suspicious_ips(self) -> List[Dict[str, Any]]:
