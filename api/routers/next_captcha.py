@@ -395,7 +395,8 @@ def next_captcha(
     try:
         # 주의: ml-service가 첨부하신 inference 로직으로 /infer/behavior 를 처리한다고 가정합니다.
         # 요청 본문은 단일 세션 문서(JSON) 그대로 전달 (파일 생성 불필요)
-        payload_for_ml = behavior_data or {}
+        # ml-service가 루트에 behavior_data 키를 요구하므로 래핑하여 전송
+        payload_for_ml = {"behavior_data": (behavior_data or {})}
         resp = httpx.post(ML_PREDICT_BOT_URL, json=payload_for_ml, timeout=15)
         resp.raise_for_status()
         infer_res = resp.json()
