@@ -33,10 +33,15 @@ def _get_behavior_mongo_client():
 @router.post("/api/behavior-data/image")
 def save_image_behavior(
     request: ImageBehaviorRequest,
-    x_api_key: Optional[str] = Header(None)
+    x_api_key: Optional[str] = Header(None),
+    is_bot: Optional[str] = Header(None)
 ):
     """이미지 선택 행동 데이터를 MongoDB에 저장 (image/abstract 공통)"""
     print(f"🚀 [/api/behavior-data/image] 요청 시작 - 캡차 타입: {request.captcha_type}")
+    
+    # 봇 여부 확인
+    is_bot_request = is_bot and is_bot.lower() == 'true'
+    print(f"🤖 봇 요청 여부: {is_bot_request}")
     
     # API 키 검증
     if not x_api_key:
@@ -50,7 +55,11 @@ def save_image_behavior(
     client = _get_behavior_mongo_client()
     if client and BEHAVIOR_MONGO_DB:
         try:
-            collection = client[BEHAVIOR_MONGO_DB]["behavior_data_image"]
+            # 봇 여부에 따라 컬렉션 이름 결정
+            collection_name = "behavior_data_image_bot" if is_bot_request else "behavior_data_image"
+            collection = client[BEHAVIOR_MONGO_DB][collection_name]
+            print(f"🤖 봇 여부: {is_bot_request}, 사용할 컬렉션: {collection_name}")
+            
             doc = {
                 "_id": ObjectId(),
                 "behavior_data": request.behavior_data,
@@ -73,10 +82,15 @@ def save_image_behavior(
 @router.post("/api/behavior-data/writing")
 def save_writing_behavior(
     request: WritingBehaviorRequest,
-    x_api_key: Optional[str] = Header(None)
+    x_api_key: Optional[str] = Header(None),
+    is_bot: Optional[str] = Header(None)
 ):
     """손글씨 행동 데이터를 MongoDB에 저장"""
     print(f"🚀 [/api/behavior-data/writing] 요청 시작")
+    
+    # 봇 여부 확인
+    is_bot_request = is_bot and is_bot.lower() == 'true'
+    print(f"🤖 봇 요청 여부: {is_bot_request}")
     
     # API 키 검증
     if not x_api_key:
@@ -90,7 +104,11 @@ def save_writing_behavior(
     client = _get_behavior_mongo_client()
     if client and BEHAVIOR_MONGO_DB:
         try:
-            collection = client[BEHAVIOR_MONGO_DB]["behavior_data_writing"]
+            # 봇 여부에 따라 컬렉션 이름 결정
+            collection_name = "behavior_data_writing_bot" if is_bot_request else "behavior_data_writing"
+            collection = client[BEHAVIOR_MONGO_DB][collection_name]
+            print(f"🤖 봇 여부: {is_bot_request}, 사용할 컬렉션: {collection_name}")
+            
             doc = {
                 "_id": ObjectId(),
                 "behavior_data": request.behavior_data,
@@ -108,4 +126,5 @@ def save_writing_behavior(
         print("⚠️ MongoDB 클라이언트가 없거나 설정되지 않음")
     
     return {"status": "success", "message": "Writing behavior data saved"}
+
 

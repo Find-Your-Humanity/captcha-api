@@ -132,10 +132,11 @@ def _is_mobile_user_agent(user_agent: str) -> bool:
     return False
 
 
-def _save_behavior_to_mongo(doc: Dict[str, Any], user_agent: Optional[str] = None) -> None:
+def _save_behavior_to_mongo(doc: Dict[str, Any], user_agent: Optional[str] = None, is_bot: bool = False) -> None:
     """
     behavior_data를 MongoDB에 저장합니다.
     모바일 환경에서는 저장하지 않습니다.
+    봇 여부에 따라 다른 컬렉션을 사용합니다.
     """
     if not SAVE_BEHAVIOR_TO_MONGO:
         return
@@ -148,16 +149,21 @@ def _save_behavior_to_mongo(doc: Dict[str, Any], user_agent: Optional[str] = Non
     client = _get_behavior_mongo_client()
     if not client or not BEHAVIOR_MONGO_DB or not BEHAVIOR_MONGO_COLLECTION:
         return
+    
+    # 봇 여부에 따라 컬렉션 이름 결정
+    collection_name = f"{BEHAVIOR_MONGO_COLLECTION}_bot" if is_bot else BEHAVIOR_MONGO_COLLECTION
+    print(f"🤖 봇 여부: {is_bot}, 사용할 컬렉션: {collection_name}")
+    
     def _worker(payload: Dict[str, Any]):
         try:
-            client[BEHAVIOR_MONGO_DB][BEHAVIOR_MONGO_COLLECTION].insert_one(payload)
+            client[BEHAVIOR_MONGO_DB][collection_name].insert_one(payload)
         except Exception:
             pass
     try:
         threading.Thread(target=_worker, args=(doc,), daemon=True).start()
     except Exception:
         try:
-            client[BEHAVIOR_MONGO_DB][BEHAVIOR_MONGO_COLLECTION].insert_one(doc)
+            client[BEHAVIOR_MONGO_DB][collection_name].insert_one(doc)
         except Exception:
             pass
 
@@ -167,7 +173,8 @@ def next_captcha(
     request: CaptchaRequest, 
     x_api_key: Optional[str] = Header(None),
     x_secret_key: Optional[str] = Header(None),
-    user_agent: Optional[str] = Header(None)
+    user_agent: Optional[str] = Header(None),
+    is_bot: Optional[str] = Header(None)
 ):
     print(f"🚀 [/api/next-captcha] 요청 시작 - API Key: {x_api_key[:20] if x_api_key else 'None'}...")
     
@@ -175,6 +182,10 @@ def next_captcha(
     print(f"🔍 User-Agent: {user_agent}")
     is_mobile = _is_mobile_user_agent(user_agent or "")
     print(f"📱 모바일 환경 감지: {is_mobile}")
+    
+    # 봇 여부 확인
+    is_bot_request = is_bot and is_bot.lower() == 'true'
+    print(f"🤖 봇 요청 여부: {is_bot_request}")
     
     # API 키/시크릿 검증 (데모 모드 예외 허용: 공개키만으로 조회)
     if not x_api_key:
@@ -262,7 +273,7 @@ def next_captcha(
                 "behavior_data": behavior_data,
                 "createdAt": datetime.utcnow().isoformat(),
             }
-            _save_behavior_to_mongo(mongo_doc, user_agent)
+            _save_behavior_to_mongo(mongo_doc, user_agent, is_bot_request)
         except Exception:
             pass
         try:
