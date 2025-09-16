@@ -211,6 +211,7 @@ class IPRateLimiter:
     
     def _save_suspicious_ip_to_mysql(self, ip_address: str, data: Dict[str, Any], api_key: str):
         """의심스러운 IP 정보를 MySQL에 저장합니다."""
+        print(f"🔍 MySQL 저장 시작: IP={ip_address}, API_KEY={api_key[:20] if api_key else 'None'}...")
         try:
             with get_db_connection() as conn:
                 with conn.cursor() as cursor:
@@ -253,9 +254,11 @@ class IPRateLimiter:
                     """, (api_key, api_key, api_key, api_key, api_key))
                     
                     conn.commit()
+                    print(f"✅ MySQL 저장 성공: IP={ip_address}, API_KEY={api_key[:20] if api_key else 'None'}...")
                     logger.info(f"Saved suspicious IP {ip_address} to MySQL for API key {api_key}")
                     
         except Exception as e:
+            print(f"❌ MySQL 저장 실패: IP={ip_address}, 오류={e}")
             logger.error(f"Failed to save suspicious IP {ip_address} to MySQL: {e}")
     
     def get_suspicious_ips(self) -> List[Dict[str, Any]]:
