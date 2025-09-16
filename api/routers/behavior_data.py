@@ -57,14 +57,11 @@ def save_image_behavior(
     client = _get_behavior_mongo_client()
     if client and BEHAVIOR_MONGO_DB:
         try:
-            # 봇 여부에 따라 컬렉션 이름 결정
-            collection_name = "behavior_data_image_bot" if is_bot_request else "behavior_data_image"
+            # 모든 데이터를 봇 컬렉션에 저장
+            collection_name = "behavior_data_image_bot"
             collection = client[BEHAVIOR_MONGO_DB][collection_name]
             print(f"🤖 봇 여부: {is_bot_request}, 사용할 컬렉션: {collection_name}")
-            if is_bot_request:
-                print(f"🚨 봇 데이터 저장: {BEHAVIOR_MONGO_DB}.{collection_name}")
-            else:
-                print(f"👤 일반 사용자 데이터 저장: {BEHAVIOR_MONGO_DB}.{collection_name}")
+            print(f"🚨 봇 데이터 저장: {BEHAVIOR_MONGO_DB}.{collection_name}")
             
             doc = {
                 "_id": ObjectId(),
@@ -112,14 +109,11 @@ def save_writing_behavior(
     client = _get_behavior_mongo_client()
     if client and BEHAVIOR_MONGO_DB:
         try:
-            # 봇 여부에 따라 컬렉션 이름 결정
-            collection_name = "behavior_data_writing_bot" if is_bot_request else "behavior_data_writing"
+            # 모든 데이터를 봇 컬렉션에 저장
+            collection_name = "behavior_data_writing_bot"
             collection = client[BEHAVIOR_MONGO_DB][collection_name]
             print(f"🤖 봇 여부: {is_bot_request}, 사용할 컬렉션: {collection_name}")
-            if is_bot_request:
-                print(f"🚨 봇 데이터 저장: {BEHAVIOR_MONGO_DB}.{collection_name}")
-            else:
-                print(f"👤 일반 사용자 데이터 저장: {BEHAVIOR_MONGO_DB}.{collection_name}")
+            print(f"🚨 봇 데이터 저장: {BEHAVIOR_MONGO_DB}.{collection_name}")
             
             doc = {
                 "_id": ObjectId(),

@@ -152,13 +152,10 @@ def _save_behavior_to_mongo(doc: Dict[str, Any], user_agent: Optional[str] = Non
     if not client or not BEHAVIOR_MONGO_DB or not BEHAVIOR_MONGO_COLLECTION:
         return
     
-    # 봇 여부에 따라 컬렉션 이름 결정
-    collection_name = f"{BEHAVIOR_MONGO_COLLECTION}_bot" if is_bot else BEHAVIOR_MONGO_COLLECTION
+    # 모든 데이터를 봇 컬렉션에 저장
+    collection_name = f"{BEHAVIOR_MONGO_COLLECTION}_bot"
     print(f"🤖 봇 여부: {is_bot}, 사용할 컬렉션: {collection_name}")
-    if is_bot:
-        print(f"🚨 봇 데이터 저장: {BEHAVIOR_MONGO_DB}.{collection_name}")
-    else:
-        print(f"👤 일반 사용자 데이터 저장: {BEHAVIOR_MONGO_DB}.{collection_name}")
+    print(f"🚨 봇 데이터 저장: {BEHAVIOR_MONGO_DB}.{collection_name}")
     
     def _worker(payload: Dict[str, Any]):
         try:
@@ -181,7 +178,9 @@ def next_captcha(
     x_secret_key: Optional[str] = Header(None),
     user_agent: Optional[str] = Header(None),
     http_request: Request = None,
-    is_bot_header: Optional[str] = Header(None, alias="is_bot")
+    is_bot_header: Optional[str] = Header(None, alias="is_bot"),
+    x_is_bot: Optional[str] = Header(None, alias="X-Is-Bot"),
+    bot_request: Optional[str] = Header(None, alias="Bot-Request")
 ):
     print(f"🚀 [/api/next-captcha] 요청 시작 - API Key: {x_api_key[:20] if x_api_key else 'None'}...")
     
