@@ -3,6 +3,8 @@ from typing import Any, Dict, Optional
 
 import json
 import httpx
+import sys
+import tempfile
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -374,17 +376,44 @@ def next_captcha(
     except Exception:
         pass
 
+    # 기존 외부 ML API 호출 로직 주석 처리
+    # try:
+    #     response = httpx.post(ML_PREDICT_BOT_URL, json={"behavior_data": behavior_data})
+    #     response.raise_for_status()
+    #     result = response.json()
+    #     confidence_score = result.get("confidence_score", 50)
+    #     is_bot = result.get("is_bot", False)
+    #     ML_SERVICE_USED = True
+    #     print(f"🤖 ML API 결과: 신뢰도={confidence_score}, 봇여부={is_bot}")
+    # except Exception as e:
+    #     print(f"❌ ML 서비스 호출 실패: {e}")
+    #     confidence_score = 75
+    #     is_bot = False
+    #     ML_SERVICE_USED = False
+
+    # --- best_model 기반 내부 추론으로 대체 ---
     try:
-        response = httpx.post(ML_PREDICT_BOT_URL, json={"behavior_data": behavior_data})
-        response.raise_for_status()
-        result = response.json()
-        confidence_score = result.get("confidence_score", 50)
-        is_bot = result.get("is_bot", False)
+        # ml-service 경로 추가 및 함수 로드
+        repo_root = str(Path(__file__).resolve().parents[2])
+        ml_service_src = str(Path(repo_root) / "ml-service")
+        if ml_service_src not in sys.path:
+            sys.path.append(ml_service_src)
+        from src.behavior_analysis.inference_bot_detector import detect_bot  # type: ignore
+
+        # 모델이 기대하는 입력 포맷으로 임시 JSON 파일 생성 ([{...}] 형태)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as tf:
+            tmp_path = tf.name
+            json.dump([behavior_data or {}], tf, ensure_ascii=False)
+        print(f"🔧 [inference] temp json: {tmp_path}")
+
+        infer_res = detect_bot(tmp_path)
+        confidence_score = float(infer_res.get("score", 50.0))
+        is_bot = bool(infer_res.get("is_bot", False))
         ML_SERVICE_USED = True
-        print(f"🤖 ML API 결과: 신뢰도={confidence_score}, 봇여부={is_bot}")
+        print(f"🤖 best_model 결과: score={confidence_score:.2f}, is_bot={is_bot}")
     except Exception as e:
-        print(f"❌ ML 서비스 호출 실패: {e}")
-        confidence_score = 75
+        print(f"❌ 내부 추론 실패: {e}")
+        confidence_score = 75.0
         is_bot = False
         ML_SERVICE_USED = False
 
