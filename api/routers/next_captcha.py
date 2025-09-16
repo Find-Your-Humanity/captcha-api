@@ -221,10 +221,6 @@ def next_captcha(
     is_mobile = _is_mobile_user_agent(user_agent or "")
     print(f"📱 모바일 환경 감지: {is_mobile}")
     
-    # 봇 여부 확인
-    is_bot_request = is_bot and is_bot.lower() == 'true'
-    print(f"🤖 봇 요청 여부: {is_bot_request}")
-    
     # API 키/시크릿 검증 (데모 모드 예외 허용: 공개키만으로 조회)
     if not x_api_key:
         print("❌ API 키 없음")
