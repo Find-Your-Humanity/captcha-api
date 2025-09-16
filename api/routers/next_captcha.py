@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from typing import Any, Dict, Optional
 
 import json
@@ -22,6 +22,8 @@ from config.settings import (
     BEHAVIOR_MONGO_COLLECTION,
 )
 from utils.usage import track_api_usage
+from utils.rate_limiter import rate_limiter
+from utils.ip_rate_limiter import ip_rate_limiter
 from database import verify_domain_access, update_api_key_usage, get_db_connection, log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
 from database import verify_api_key_with_secret, verify_api_key_auto_secret
 from infrastructure.redis_client import (
@@ -174,9 +176,31 @@ def next_captcha(
     x_api_key: Optional[str] = Header(None),
     x_secret_key: Optional[str] = Header(None),
     user_agent: Optional[str] = Header(None),
+    http_request: Request = None,
     is_bot: Optional[str] = Header(None)
 ):
     print(f"🚀 [/api/next-captcha] 요청 시작 - API Key: {x_api_key[:20] if x_api_key else 'None'}...")
+    
+    # 클라이언트 IP 추출
+    client_ip = ip_rate_limiter.get_client_ip(http_request)
+    print(f"🌐 클라이언트 IP: {client_ip}")
+    
+    # IP 기반 Rate Limiting 체크
+    try:
+        ip_rate_limit_result = ip_rate_limiter.check_ip_rate_limit(
+            ip_address=client_ip,
+            rate_limit_per_minute=30,  # IP당 분당 30회
+            rate_limit_per_hour=500,   # IP당 시간당 500회
+            rate_limit_per_day=2000,   # IP당 일당 2000회
+            api_key=x_api_key          # API 키 전달 (MySQL 저장용)
+        )
+        print(f"✅ IP Rate Limiting 통과: {ip_rate_limit_result['minute_remaining']}/min, {ip_rate_limit_result['hour_remaining']}/hour, {ip_rate_limit_result['day_remaining']}/day 남음")
+    except HTTPException as e:
+        print(f"❌ IP Rate Limiting 초과: {e.detail}")
+        raise e
+    except Exception as e:
+        print(f"⚠️ IP Rate Limiting 오류 (요청 허용): {e}")
+        # Redis 오류 등으로 IP Rate Limiting이 실패해도 요청은 허용 (fail-open)
     
     # User-Agent 디버깅 로그
     print(f"🔍 User-Agent: {user_agent}")
@@ -217,6 +241,29 @@ def next_captcha(
             if not api_key_info:
                 raise HTTPException(status_code=401, detail="Invalid API key or secret key")
             print(f"🔐 최종 검증 모드: {x_api_key[:20]}... (공개키+비밀키)")
+    
+    # Rate Limiting 체크
+    try:
+        rate_limit_per_minute = api_key_info.get('rate_limit_per_minute', 60)
+        rate_limit_per_day = api_key_info.get('rate_limit_per_day', 1000)
+        
+        print(f"🔒 Rate Limiting 체크: {rate_limit_per_minute}/min, {rate_limit_per_day}/day")
+        
+        # Rate Limiting 검증
+        rate_limit_result = rate_limiter.check_rate_limit(
+            api_key=x_api_key,
+            rate_limit_per_minute=rate_limit_per_minute,
+            rate_limit_per_day=rate_limit_per_day
+        )
+        
+        print(f"✅ Rate Limiting 통과: {rate_limit_result['minute_remaining']}/min, {rate_limit_result['day_remaining']}/day 남음")
+        
+    except HTTPException as e:
+        print(f"❌ Rate Limiting 초과: {e.detail}")
+        raise e
+    except Exception as e:
+        print(f"⚠️ Rate Limiting 오류 (요청 허용): {e}")
+        # Redis 오류 등으로 Rate Limiting이 실패해도 요청은 허용 (fail-open)
     
     # 도메인 검증 (Origin 헤더 확인)
     # Note: Origin 헤더는 FastAPI에서 자동으로 처리되지 않으므로 request.headers에서 직접 가져와야 함

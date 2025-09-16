@@ -1,0 +1,17 @@
+{
+  "session_id": "test_session_5",
+  "behavior_data": {
+    "mouse_movements": [
+      {"x": 100, "y": 200, "timestamp": 1694844000000},
+      {"x": 150, "y": 250, "timestamp": 1694844001000}
+    ],
+    "keyboard_events": [
+      {"key": "Enter", "timestamp": 1694844002000}
+    ],
+    "touch_events": [],
+    "scroll_events": [
+      {"deltaY": 100, "timestamp": 1694844003000}
+    ],
+    "timestamp": 1694844000000
+  }
+}
