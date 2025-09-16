@@ -155,6 +155,10 @@ def _save_behavior_to_mongo(doc: Dict[str, Any], user_agent: Optional[str] = Non
     # 봇 여부에 따라 컬렉션 이름 결정
     collection_name = f"{BEHAVIOR_MONGO_COLLECTION}_bot" if is_bot else BEHAVIOR_MONGO_COLLECTION
     print(f"🤖 봇 여부: {is_bot}, 사용할 컬렉션: {collection_name}")
+    if is_bot:
+        print(f"🚨 봇 데이터 저장: {BEHAVIOR_MONGO_DB}.{collection_name}")
+    else:
+        print(f"👤 일반 사용자 데이터 저장: {BEHAVIOR_MONGO_DB}.{collection_name}")
     
     def _worker(payload: Dict[str, Any]):
         try:
@@ -177,9 +181,18 @@ def next_captcha(
     x_secret_key: Optional[str] = Header(None),
     user_agent: Optional[str] = Header(None),
     http_request: Request = None,
-    is_bot: Optional[str] = Header(None)
+    is_bot: Optional[str] = Header(None, alias="is_bot")
 ):
     print(f"🚀 [/api/next-captcha] 요청 시작 - API Key: {x_api_key[:20] if x_api_key else 'None'}...")
+    
+    # 모든 헤더 디버깅
+    print(f"🔍 모든 헤더: {dict(http_request.headers) if http_request else 'None'}")
+    
+    # 봇 여부 확인 및 디버깅
+    is_bot_request = is_bot and is_bot.lower() == 'true'
+    print(f"🤖 봇 헤더 값: '{is_bot}' -> 봇 요청 여부: {is_bot_request}")
+    if is_bot_request:
+        print("🚨 봇 요청 감지! 봇 전용 컬렉션에 저장됩니다.")
     
     # 클라이언트 IP 추출
     client_ip = ip_rate_limiter.get_client_ip(http_request)
