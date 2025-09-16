@@ -179,6 +179,7 @@ def next_captcha(
     print(f"🌐 클라이언트 IP: {client_ip}")
     
     # IP 기반 Rate Limiting 체크
+    print(f"🔍 IP Rate Limiting 시작: IP={client_ip}, API_KEY={x_api_key[:20] if x_api_key else 'None'}...")
     try:
         ip_rate_limit_result = ip_rate_limiter.check_ip_rate_limit(
             ip_address=client_ip,
