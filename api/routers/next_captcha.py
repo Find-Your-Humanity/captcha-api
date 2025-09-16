@@ -391,28 +391,27 @@ def next_captcha(
     #     is_bot = False
     #     ML_SERVICE_USED = False
 
-    # --- best_model 기반 내부 추론으로 대체 ---
+    # --- Option B: ml-service API 호출로 best_model 기반 추론 ---
     try:
-        # ml-service 경로 추가 및 함수 로드
-        repo_root = str(Path(__file__).resolve().parents[2])
-        ml_service_src = str(Path(repo_root) / "ml-service")
-        if ml_service_src not in sys.path:
-            sys.path.append(ml_service_src)
-        from src.behavior_analysis.inference_bot_detector import detect_bot  # type: ignore
-
-        # 모델이 기대하는 입력 포맷으로 임시 JSON 파일 생성 ([{...}] 형태)
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as tf:
-            tmp_path = tf.name
-            json.dump([behavior_data or {}], tf, ensure_ascii=False)
-        print(f"🔧 [inference] temp json: {tmp_path}")
-
-        infer_res = detect_bot(tmp_path)
+        # 주의: ml-service가 첨부하신 inference 로직으로 /infer/behavior 를 처리한다고 가정합니다.
+        # 요청 본문은 단일 세션 문서(JSON) 그대로 전달 (파일 생성 불필요)
+        payload_for_ml = behavior_data or {}
+        resp = httpx.post(ML_PREDICT_BOT_URL, json=payload_for_ml, timeout=15)
+        resp.raise_for_status()
+        infer_res = resp.json()
         confidence_score = float(infer_res.get("score", 50.0))
         is_bot = bool(infer_res.get("is_bot", False))
         ML_SERVICE_USED = True
-        print(f"🤖 best_model 결과: score={confidence_score:.2f}, is_bot={is_bot}")
+        print(f"🤖 ml-service(best_model) 결과: score={confidence_score:.2f}, is_bot={is_bot}")
+        # 디버깅 필드가 있으면 출력
+        try:
+            dbg = {k: infer_res[k] for k in ["features"] if k in infer_res}
+            if dbg:
+                print(f"🔍 ml-service debug: {json.dumps(dbg, ensure_ascii=False)[:800]}")
+        except Exception:
+            pass
     except Exception as e:
-        print(f"❌ 내부 추론 실패: {e}")
+        print(f"❌ ml-service 호출 실패: {e}")
         confidence_score = 75.0
         is_bot = False
         ML_SERVICE_USED = False
