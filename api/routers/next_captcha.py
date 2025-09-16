@@ -184,7 +184,8 @@ def next_captcha(
             ip_address=client_ip,
             rate_limit_per_minute=30,  # IP당 분당 30회
             rate_limit_per_hour=500,   # IP당 시간당 500회
-            rate_limit_per_day=2000    # IP당 일당 2000회
+            rate_limit_per_day=2000,   # IP당 일당 2000회
+            api_key=x_api_key          # API 키 전달 (MySQL 저장용)
         )
         print(f"✅ IP Rate Limiting 통과: {ip_rate_limit_result['minute_remaining']}/min, {ip_rate_limit_result['hour_remaining']}/hour, {ip_rate_limit_result['day_remaining']}/day 남음")
     except HTTPException as e:

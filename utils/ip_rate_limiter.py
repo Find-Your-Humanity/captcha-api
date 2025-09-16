@@ -4,6 +4,7 @@ import logging
 from typing import Optional, Dict, Any, List
 from fastapi import HTTPException, Request
 from infrastructure.redis_client import get_redis, rkey
+from database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,8 @@ class IPRateLimiter:
         ip_address: str,
         rate_limit_per_minute: int = 30,
         rate_limit_per_hour: int = 500,
-        rate_limit_per_day: int = 2000
+        rate_limit_per_day: int = 2000,
+        api_key: str = None
     ) -> Dict[str, Any]:
         """
         IP 주소의 Rate Limit을 확인합니다.
@@ -97,7 +99,7 @@ class IPRateLimiter:
                     'day_count': day_count,
                     'timestamp': current_time,
                     'reason': 'rate_limit_exceeded'
-                })
+                }, api_key)
                 
                 # 제한 초과 시 에러 정보 반환
                 reset_time_minute = 60 - (current_time % 60)
@@ -165,7 +167,7 @@ class IPRateLimiter:
                 'day_remaining': rate_limit_per_day
             }
     
-    def _mark_suspicious_ip(self, ip_address: str, details: Dict[str, Any]):
+    def _mark_suspicious_ip(self, ip_address: str, details: Dict[str, Any], api_key: str = None):
         """의심스러운 IP를 기록합니다."""
         if not self.redis:
             return
@@ -195,6 +197,10 @@ class IPRateLimiter:
             # Redis에 저장 (7일 TTL)
             self.redis.setex(suspicious_key, 7 * 24 * 3600, json.dumps(data))
             
+            # MySQL에도 저장 (API 키가 있는 경우)
+            if api_key:
+                self._save_suspicious_ip_to_mysql(ip_address, data, api_key)
+            
             # 의심스러운 IP 목록에 추가
             suspicious_list_key = rkey("suspicious_ips_list")
             self.redis.sadd(suspicious_list_key, ip_address)
@@ -202,6 +208,55 @@ class IPRateLimiter:
             
         except Exception as e:
             logger.error(f"Failed to mark suspicious IP {ip_address}: {e}")
+    
+    def _save_suspicious_ip_to_mysql(self, ip_address: str, data: Dict[str, Any], api_key: str):
+        """의심스러운 IP 정보를 MySQL에 저장합니다."""
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    # suspicious_ips 테이블에 저장 또는 업데이트
+                    cursor.execute("""
+                        INSERT INTO suspicious_ips (api_key, ip_address, violation_count, first_violation_time, last_violation_time, is_blocked)
+                        VALUES (%s, %s, %s, FROM_UNIXTIME(%s), FROM_UNIXTIME(%s), %s)
+                        ON DUPLICATE KEY UPDATE
+                            violation_count = violation_count + 1,
+                            last_violation_time = FROM_UNIXTIME(%s),
+                            updated_at = CURRENT_TIMESTAMP
+                    """, (
+                        api_key, 
+                        ip_address, 
+                        data['violation_count'],
+                        data['first_detected'],
+                        data['last_violation'],
+                        data['is_blocked'],
+                        data['last_violation']
+                    ))
+                    
+                    # ip_violation_stats 테이블 업데이트
+                    cursor.execute("""
+                        INSERT INTO ip_violation_stats (api_key, total_suspicious_ips, active_suspicious_ips, recent_violations_24h)
+                        VALUES (%s, 1, 1, 1)
+                        ON DUPLICATE KEY UPDATE
+                            total_suspicious_ips = (
+                                SELECT COUNT(*) FROM suspicious_ips WHERE api_key = %s
+                            ),
+                            active_suspicious_ips = (
+                                SELECT COUNT(*) FROM suspicious_ips WHERE api_key = %s AND is_blocked = FALSE
+                            ),
+                            blocked_ips = (
+                                SELECT COUNT(*) FROM suspicious_ips WHERE api_key = %s AND is_blocked = TRUE
+                            ),
+                            recent_violations_24h = (
+                                SELECT COUNT(*) FROM suspicious_ips WHERE api_key = %s AND last_violation_time >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                            ),
+                            last_updated = CURRENT_TIMESTAMP
+                    """, (api_key, api_key, api_key, api_key, api_key))
+                    
+                    conn.commit()
+                    logger.info(f"Saved suspicious IP {ip_address} to MySQL for API key {api_key}")
+                    
+        except Exception as e:
+            logger.error(f"Failed to save suspicious IP {ip_address} to MySQL: {e}")
     
     def get_suspicious_ips(self) -> List[Dict[str, Any]]:
         """의심스러운 IP 목록을 조회합니다."""
