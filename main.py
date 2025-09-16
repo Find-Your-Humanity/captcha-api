@@ -67,6 +67,7 @@ from api.routers.imagegrid import router as imagegrid_router
 from api.routers.secure_captcha import router as secure_captcha_router
 from api.routers.verify_captcha import router as verify_captcha_router
 from api.routers.behavior_data import router as behavior_data_router
+from api.routers.ip_management import router as ip_management_router
 from utils.text import normalize_text
 from infrastructure.redis_client import (
     get_redis,
@@ -133,6 +134,7 @@ app.include_router(imagegrid_router)
 app.include_router(secure_captcha_router)
 app.include_router(verify_captcha_router)
 app.include_router(behavior_data_router)
+app.include_router(ip_management_router)
 
 # --- API Key validation helper ---
 from utils.usage import validate_api_key

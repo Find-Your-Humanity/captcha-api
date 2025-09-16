@@ -145,7 +145,7 @@ async def test_burst_requests(api_key: str, endpoint: str, burst_size: int = 5):
 def main():
     parser = argparse.ArgumentParser(description='Rate Limiting 테스트')
     parser.add_argument('--api-key', required=True, help='API 키')
-    parser.add_argument('--endpoint', default='http://localhost:8000/api/next-captcha', help='테스트할 엔드포인트')
+    parser.add_argument('--endpoint', default='https://api.realcatcha.com/api/next-captcha', help='테스트할 엔드포인트')
     parser.add_argument('--requests', type=int, default=10, help='요청 수 (기본값: 10)')
     parser.add_argument('--delay', type=float, default=0.1, help='요청 간격 (초, 기본값: 0.1)')
     parser.add_argument('--burst', type=int, default=5, help='Burst 테스트 요청 수 (기본값: 5)')

@@ -23,6 +23,7 @@ from config.settings import (
 )
 from utils.usage import track_api_usage
 from utils.rate_limiter import rate_limiter
+from utils.ip_rate_limiter import ip_rate_limiter
 from database import verify_domain_access, update_api_key_usage, get_db_connection, log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
 from database import verify_api_key_with_secret, verify_api_key_auto_secret
 from infrastructure.redis_client import (
@@ -168,9 +169,30 @@ def next_captcha(
     request: CaptchaRequest, 
     x_api_key: Optional[str] = Header(None),
     x_secret_key: Optional[str] = Header(None),
-    user_agent: Optional[str] = Header(None)
+    user_agent: Optional[str] = Header(None),
+    http_request: Request = None
 ):
     print(f"🚀 [/api/next-captcha] 요청 시작 - API Key: {x_api_key[:20] if x_api_key else 'None'}...")
+    
+    # 클라이언트 IP 추출
+    client_ip = ip_rate_limiter.get_client_ip(http_request)
+    print(f"🌐 클라이언트 IP: {client_ip}")
+    
+    # IP 기반 Rate Limiting 체크
+    try:
+        ip_rate_limit_result = ip_rate_limiter.check_ip_rate_limit(
+            ip_address=client_ip,
+            rate_limit_per_minute=30,  # IP당 분당 30회
+            rate_limit_per_hour=500,   # IP당 시간당 500회
+            rate_limit_per_day=2000    # IP당 일당 2000회
+        )
+        print(f"✅ IP Rate Limiting 통과: {ip_rate_limit_result['minute_remaining']}/min, {ip_rate_limit_result['hour_remaining']}/hour, {ip_rate_limit_result['day_remaining']}/day 남음")
+    except HTTPException as e:
+        print(f"❌ IP Rate Limiting 초과: {e.detail}")
+        raise e
+    except Exception as e:
+        print(f"⚠️ IP Rate Limiting 오류 (요청 허용): {e}")
+        # Redis 오류 등으로 IP Rate Limiting이 실패해도 요청은 허용 (fail-open)
     
     # User-Agent 디버깅 로그
     print(f"🔍 User-Agent: {user_agent}")
