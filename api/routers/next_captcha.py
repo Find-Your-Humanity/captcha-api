@@ -22,6 +22,7 @@ from config.settings import (
     BEHAVIOR_MONGO_COLLECTION,
 )
 from utils.usage import track_api_usage
+from utils.rate_limiter import rate_limiter
 from database import verify_domain_access, update_api_key_usage, get_db_connection, log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
 from database import verify_api_key_with_secret, verify_api_key_auto_secret
 from infrastructure.redis_client import (
@@ -206,6 +207,29 @@ def next_captcha(
             if not api_key_info:
                 raise HTTPException(status_code=401, detail="Invalid API key or secret key")
             print(f"🔐 최종 검증 모드: {x_api_key[:20]}... (공개키+비밀키)")
+    
+    # Rate Limiting 체크
+    try:
+        rate_limit_per_minute = api_key_info.get('rate_limit_per_minute', 60)
+        rate_limit_per_day = api_key_info.get('rate_limit_per_day', 1000)
+        
+        print(f"🔒 Rate Limiting 체크: {rate_limit_per_minute}/min, {rate_limit_per_day}/day")
+        
+        # Rate Limiting 검증
+        rate_limit_result = rate_limiter.check_rate_limit(
+            api_key=x_api_key,
+            rate_limit_per_minute=rate_limit_per_minute,
+            rate_limit_per_day=rate_limit_per_day
+        )
+        
+        print(f"✅ Rate Limiting 통과: {rate_limit_result['minute_remaining']}/min, {rate_limit_result['day_remaining']}/day 남음")
+        
+    except HTTPException as e:
+        print(f"❌ Rate Limiting 초과: {e.detail}")
+        raise e
+    except Exception as e:
+        print(f"⚠️ Rate Limiting 오류 (요청 허용): {e}")
+        # Redis 오류 등으로 Rate Limiting이 실패해도 요청은 허용 (fail-open)
     
     # 도메인 검증 (Origin 헤더 확인)
     # Note: Origin 헤더는 FastAPI에서 자동으로 처리되지 않으므로 request.headers에서 직접 가져와야 함
