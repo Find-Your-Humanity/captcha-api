@@ -400,6 +400,10 @@ def next_captcha(
         resp = httpx.post(ML_PREDICT_BOT_URL, json=payload_for_ml, timeout=15)
         resp.raise_for_status()
         infer_res = resp.json()
+        
+        # 🔍 ML service 응답 전체 디버깅
+        print(f"🔍 ML service 전체 응답: {json.dumps(infer_res, ensure_ascii=False)}")
+        
         confidence_score = float(infer_res.get("score", 50.0))
         is_bot = bool(infer_res.get("is_bot", False))
         ML_SERVICE_USED = True
