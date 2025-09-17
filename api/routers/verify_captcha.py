@@ -150,30 +150,43 @@ def verify_captcha(
     """
     start_time = datetime.now()
     
-    # 데모 키는 공개키만으로 허용, 일반 키는 공개+비밀 필요
+    # API 키 검증
     if not x_api_key:
-        raise HTTPException(status_code=401, detail="API key required")
+        raise HTTPException(status_code=401, detail="API 키가 필요합니다.")
+    
+    # 공개키 검증
     api_key_info = verify_api_key_auto_secret(x_api_key)
-    if api_key_info and api_key_info.get('is_demo'):
-        pass
+    if not api_key_info:
+        raise HTTPException(status_code=401, detail="설정된 공개키가 올바르지 않습니다.")
+    
+    # 데모 키는 공개키만으로 허용, 일반 키는 공개+비밀 필요
+    if api_key_info.get('is_demo'):
+        print(f"🎯 데모 키 검증 완료: {x_api_key[:20]}...")
     else:
+        # 일반 키: 비밀키 검증 필요
         if not x_secret_key:
-            raise HTTPException(status_code=401, detail="API key and secret key required")
-        api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
-        if not api_key_info:
-            raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+            raise HTTPException(status_code=401, detail="일반 키 사용 시 비밀키가 필요합니다.")
+        
+        # 비밀키 검증
+        api_key_info_with_secret = verify_api_key_with_secret(x_api_key, x_secret_key)
+        if not api_key_info_with_secret:
+            raise HTTPException(status_code=401, detail="설정된 비밀키가 올바르지 않습니다.")
+        
+        # 검증된 정보로 업데이트
+        api_key_info = api_key_info_with_secret
+        print(f"🔐 일반 키 검증 완료: {x_api_key[:20]}... (공개키+비밀키)")
     
     # 도메인 검증 (Origin 헤더 확인)
     # TODO: Origin 헤더 검증 로직 추가
     
     # 캡차 토큰 검증 로직
     if not request.captcha_token or not request.captcha_response:
-        raise HTTPException(status_code=400, detail="Invalid captcha token or response")
+        raise HTTPException(status_code=400, detail="캡차 토큰 또는 응답이 누락되었습니다.")
     
     # 토큰 검증 및 캡차 타입 가져오기
     token_valid, captcha_type = verify_captcha_token(request.captcha_token, api_key_info['api_key_id'])
     if not token_valid:
-        raise HTTPException(status_code=400, detail="Invalid or expired captcha token")
+        raise HTTPException(status_code=400, detail="캡차 토큰이 유효하지 않거나 만료되었습니다.")
     
     # API 키 사용량 업데이트 (캡차 타입별)
     update_api_key_usage(api_key_info['api_key_id'], captcha_type)

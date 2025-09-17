@@ -244,10 +244,10 @@ def next_captcha(
     is_mobile = _is_mobile_user_agent(user_agent or "")
     print(f"📱 모바일 환경 감지: {is_mobile}")
     
-    # API 키/시크릿 검증 (데모 모드 예외 허용: 공개키만으로 조회)
+    # API 키 검증
     if not x_api_key:
         print("❌ API 키 없음")
-        raise HTTPException(status_code=401, detail="API key required")
+        raise HTTPException(status_code=401, detail="API 키가 필요합니다.")
     
     # 데모 키 하드코딩 (홈페이지 데모용)
     DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
@@ -258,7 +258,7 @@ def next_captcha(
         # 데모: 공개키만으로 DB에서 is_demo 키 확인 후 통과 (시크릿 불요)
         api_key_info = verify_api_key_auto_secret(x_api_key)
         if not api_key_info or not api_key_info.get('is_demo'):
-            raise HTTPException(status_code=401, detail="Invalid demo api key")
+            raise HTTPException(status_code=401, detail="설정된 데모 키가 올바르지 않습니다.")
         print(f"🎯 데모 모드(DB): {DEMO_PUBLIC_KEY} 사용")
     else:
         # 일반: 챌린지 요청은 공개키만, 최종 검증은 공개키+비밀키
@@ -266,13 +266,18 @@ def next_captcha(
             # 2단계: 공개키만으로 챌린지 요청 (브라우저에서 직접 호출)
             api_key_info = verify_api_key_auto_secret(x_api_key)
             if not api_key_info:
-                raise HTTPException(status_code=401, detail="Invalid API key")
+                raise HTTPException(status_code=401, detail="설정된 공개키가 올바르지 않습니다.")
             print(f"🌐 챌린지 요청 모드: {x_api_key[:20]}... (공개키만)")
         else:
             # 4단계: 공개키+비밀키로 최종 검증 (사용자 서버에서 호출)
             api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
             if not api_key_info:
-                raise HTTPException(status_code=401, detail="Invalid API key or secret key")
+                # 공개키와 비밀키 중 어느 것이 잘못되었는지 구분
+                api_key_check = verify_api_key_auto_secret(x_api_key)
+                if not api_key_check:
+                    raise HTTPException(status_code=401, detail="설정된 공개키가 올바르지 않습니다.")
+                else:
+                    raise HTTPException(status_code=401, detail="설정된 비밀키가 올바르지 않습니다.")
             print(f"🔐 최종 검증 모드: {x_api_key[:20]}... (공개키+비밀키)")
     
     # Rate Limiting 체크
