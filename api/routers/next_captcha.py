@@ -244,10 +244,10 @@ def next_captcha(
     is_mobile = _is_mobile_user_agent(user_agent or "")
     print(f"📱 모바일 환경 감지: {is_mobile}")
     
-    # API 키 검증
+    # API 키/시크릿 검증 (데모 모드 예외 허용: 공개키만으로 조회)
     if not x_api_key:
         print("❌ API 키 없음")
-        raise HTTPException(status_code=401, detail="API 키가 필요합니다.")
+        raise HTTPException(status_code=401, detail="API key required")
     
     # 데모 키 하드코딩 (홈페이지 데모용)
     DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
@@ -258,7 +258,7 @@ def next_captcha(
         # 데모: 공개키만으로 DB에서 is_demo 키 확인 후 통과 (시크릿 불요)
         api_key_info = verify_api_key_auto_secret(x_api_key)
         if not api_key_info or not api_key_info.get('is_demo'):
-            raise HTTPException(status_code=401, detail="설정된 데모 키가 올바르지 않습니다.")
+            raise HTTPException(status_code=401, detail="Invalid demo api key")
         print(f"🎯 데모 모드(DB): {DEMO_PUBLIC_KEY} 사용")
     else:
         # 일반: 챌린지 요청은 공개키만, 최종 검증은 공개키+비밀키
@@ -266,18 +266,13 @@ def next_captcha(
             # 2단계: 공개키만으로 챌린지 요청 (브라우저에서 직접 호출)
             api_key_info = verify_api_key_auto_secret(x_api_key)
             if not api_key_info:
-                raise HTTPException(status_code=401, detail="설정된 공개키가 올바르지 않습니다.")
+                raise HTTPException(status_code=401, detail="Invalid API key")
             print(f"🌐 챌린지 요청 모드: {x_api_key[:20]}... (공개키만)")
         else:
             # 4단계: 공개키+비밀키로 최종 검증 (사용자 서버에서 호출)
             api_key_info = verify_api_key_with_secret(x_api_key, x_secret_key)
             if not api_key_info:
-                # 공개키와 비밀키 중 어느 것이 잘못되었는지 구분
-                api_key_check = verify_api_key_auto_secret(x_api_key)
-                if not api_key_check:
-                    raise HTTPException(status_code=401, detail="설정된 공개키가 올바르지 않습니다.")
-                else:
-                    raise HTTPException(status_code=401, detail="설정된 비밀키가 올바르지 않습니다.")
+                raise HTTPException(status_code=401, detail="Invalid API key or secret key")
             print(f"🔐 최종 검증 모드: {x_api_key[:20]}... (공개키+비밀키)")
     
     # Rate Limiting 체크
@@ -466,7 +461,7 @@ def next_captcha(
         print("🛡️ 모바일 환경 감지: behavior_data_score MongoDB 저장 건너뜀")
 
     # 체크박스 시도 횟수 추적 및 봇 차단 로직
-    is_low_score = confidence_score >= 91
+    is_low_score = confidence_score <= 9
     session_data = increment_checkbox_attempts(checkbox_session_id, is_low_score=is_low_score, ttl=300)
     
     if session_data and session_data.get("is_blocked", False):
@@ -509,8 +504,8 @@ def next_captcha(
             captcha_type = ""  # 에러 상태로 설정
         # 데스크톱 환경: 모든 경우에 handwritingcaptcha로 설정
         # print(f"🎯 모든 경우에 handwritingcaptcha로 설정 (신뢰도: {confidence_score})")
-        # next_captcha_value = None
-        # captcha_type = "pass"
+        # next_captcha_value = "handwritingcaptcha"
+        # captcha_type = "handwriting"
 
     # 안전 기본값 초기화 (예외 상황 방지)
     captcha_token: Optional[str] = None
@@ -533,26 +528,25 @@ def next_captcha(
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
+        "confidence_score": confidence_score,
         "captcha_type": captcha_type,
         "next_captcha": next_captcha_value,
         "captcha_token": captcha_token,
-        "is_blocked": False
-        # 🔒 보안 강화: 민감 정보 제거
-        # - confidence_score: AI 점수 (제거)
-        # - behavior_data_received: 행동 데이터 수신 여부 (제거)
-        # - ml_service_used: ML 서비스 사용 여부 (제거)
-        # - is_bot_detected: 봇 탐지 결과 (제거)
-        # - session_id: 세션 ID (제거)
-        # - attempts: 시도 횟수 (제거)
-        # - low_score_attempts: 낮은 점수 시도 횟수 (제거)
+        "behavior_data_received": len(str(behavior_data)) > 0,
+        "ml_service_used": ML_SERVICE_USED,
+        "is_bot_detected": is_bot if ML_SERVICE_USED else None,
+        "session_id": checkbox_session_id,
+        "is_blocked": False,
+        "attempts": session_data.get("attempts", 0) if session_data else 0,
+        "low_score_attempts": session_data.get("low_score_attempts", 0) if session_data else 0
     }
     try:
-        # 🔒 보안 강화: 로그에서도 민감 정보 제거
         preview = {
             "captcha_type": captcha_type,
             "next_captcha": next_captcha_value,
-            "status": "success"
-            # 민감 정보는 로그에서도 제거
+            "confidence_score": confidence_score,
+            "ml_service_used": ML_SERVICE_USED,
+            "is_bot_detected": is_bot if ML_SERVICE_USED else None,
         }
         print(f"📦 [/api/next-captcha] response: {json.dumps(preview, ensure_ascii=False)}")
     except Exception:
@@ -584,20 +578,17 @@ def next_captcha(
                 user_agent=None
             )
             
-            # 사용량 카운팅 정책
-            # - pass일 때만 next-captcha에서 1회 카운트
-            # - image/abstract/handwriting는 챌린지 생성 시점에서만 카운트
-            if captcha_type == "pass":
-                # 일별 통계 업데이트 (전역)
-                update_daily_api_stats(captcha_type, True, 0)
-                # 사용자별 일별 통계 업데이트
-                update_daily_api_stats_by_key(
-                    user_id=api_key_info['user_id'],
-                    api_key=x_api_key,
-                    api_type=captcha_type,
-                    response_time=0,
-                    is_success=True
-                )
+            # 일별 통계 업데이트 (전역) - 실제 captcha_type 사용
+            update_daily_api_stats(captcha_type, True, 0)
+            
+            # 사용자별 일별 통계 업데이트 - 실제 captcha_type 사용
+            update_daily_api_stats_by_key(
+                user_id=api_key_info['user_id'],
+                api_key=x_api_key,
+                api_type=captcha_type,  # 실제 결정된 captcha_type 사용
+                response_time=0,
+                is_success=True
+            )
             
             print(f"📝 [/api/next-captcha] 로그 및 통계 저장 완료")
     except Exception as e:

@@ -25,9 +25,10 @@ def create_abstract_captcha(image_urls: list[str], target_class: str, is_positiv
     return {
         "challenge_id": challenge_id,
         "question": f"{keywords[0]} 이미지를 골라주세요" if keywords else "Select",
+        "target_class": target_class,
+        "keywords": keywords,
         "ttl": ttl_seconds,
         "images": [{"id": i, "url": u} for i, u in enumerate(image_urls)],
-        # 🔒 보안 강화: target_class, keywords 제거 (정답 정보 노출 방지)
     }
 
 

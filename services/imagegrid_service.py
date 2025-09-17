@@ -76,8 +76,8 @@ def create_imagegrid_challenge() -> Dict[str, Any]:
         "url": url,
         "ttl": session.ttl_seconds,
         "grid_size": 3,
+        "target_label": target_label,
         "question": question_text,
-        # 🔒 보안 강화: target_label 제거 (정답 정보 노출 방지)
     }
 
 
