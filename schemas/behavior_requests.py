@@ -10,3 +10,6 @@ class WritingBehaviorRequest(BaseModel):
     behavior_data: Dict[str, Any]
     pageEvents: Dict[str, Any]
 
+
+
+

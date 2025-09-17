@@ -459,23 +459,23 @@ def next_captcha(
         captcha_type = "pass"      # 통과 처리
     else:
           # 데스크톱 환경: 신뢰도 점수에 따른 캡차 타입 결정
-        if confidence_score >= 90:
-            next_captcha_value = None  # pass
+        if confidence_score <= 10:
+            next_captcha_value = None  # 0-10점: 통과
             captcha_type = "pass"
-        elif confidence_score >= 60:
-            next_captcha_value = "imagecaptcha"   # Basic
+        elif confidence_score <= 25:
+            next_captcha_value = "imagecaptcha"   # 11-25점: 기본 이미지 캡차
             captcha_type = "image"
-        elif confidence_score >= 40:
-            next_captcha_value = "abstractcaptcha"
+        elif confidence_score <= 40:
+            next_captcha_value = "abstractcaptcha"  # 26-40점: 추상 이미지 캡차
             captcha_type = "abstract"
-        elif confidence_score >= 10:
-            next_captcha_value = "handwritingcaptcha"
+        elif confidence_score <= 95:
+            next_captcha_value = "handwritingcaptcha"  # 41-95점: 손글씨 캡차
             captcha_type = "handwriting"
         else:   
-            # confidence_score 9 이하: 봇일 확률 높음, 시도 횟수 제한 적용
-            print(f"⚠️ 낮은 신뢰도 점수: {confidence_score}, 시도 횟수: {session_data.get('low_score_attempts', 0) if session_data else 0}")
+            # confidence_score 96-100점: 봇 의심, 접근 차단
+            print(f"🚫 봇 의심 점수: {confidence_score}, 접근 차단")
             next_captcha_value = ""  # 캡차 비활성화
-            captcha_type = ""
+            captcha_type = ""  # 에러 상태로 설정
         # 데스크톱 환경: 모든 경우에 handwritingcaptcha로 설정
         # print(f"🎯 모든 경우에 handwritingcaptcha로 설정 (신뢰도: {confidence_score})")
         # next_captcha_value = "handwritingcaptcha"
