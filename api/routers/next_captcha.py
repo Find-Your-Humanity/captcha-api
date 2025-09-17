@@ -552,26 +552,26 @@ def next_captcha(
     except Exception:
         pass
     
-    # API 요청 로그 저장
+    # API 요청 로그 저장 (pass일 때만)
     try:
-        if api_key_info and not api_key_info.get('is_demo', False):
-            # 상세 로그 저장 (api_request_logs 테이블) - 실제 captcha_type 사용
+        if api_key_info and not api_key_info.get('is_demo', False) and captcha_type == "pass":
+            # pass일 때만 api_request_logs에 기록 (다른 타입은 각 challenge 엔드포인트에서 기록)
             log_request(
                 user_id=api_key_info['user_id'],
                 api_key=x_api_key,
                 path="/api/next-captcha",
-                api_type=captcha_type,  # 실제 결정된 captcha_type 사용
+                api_type=captcha_type,  # "pass"
                 method="POST",
                 status_code=200,
                 response_time=0  # next-captcha는 응답시간 측정하지 않음
             )
             
-            # request_logs 테이블에도 로그 저장 - 실제 captcha_type 사용
+            # request_logs 테이블에도 로그 저장
             log_request_to_request_logs(
                 user_id=api_key_info['user_id'],
                 api_key=x_api_key,
                 path="/api/next-captcha",
-                api_type=captcha_type,  # 실제 결정된 captcha_type 사용
+                api_type=captcha_type,  # "pass"
                 method="POST",
                 status_code=200,
                 response_time=0,

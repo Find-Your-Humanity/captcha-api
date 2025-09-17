@@ -232,6 +232,103 @@ def create(
     for idx, p in enumerate(final_paths):
         cdn_url = build_cdn_url(str(p), is_remote_source, asset_base_url=ASSET_BASE_URL, map_local_to_key=map_local_to_key)
         images.append({"id": idx, "url": cdn_url or ""})
-    return create_abstract_captcha([img["url"] for img in images], target_class, list(is_positive_flags), keywords)
+    
+    import time
+    start_time = time.time()
+    try:
+        result = create_abstract_captcha([img["url"] for img in images], target_class, list(is_positive_flags), keywords)
+        response_time = int((time.time() - start_time) * 1000)
+
+        # 일반 키만 카운트/로그
+        try:
+            if x_api_key:
+                DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
+                info = verify_api_key_auto_secret(x_api_key)
+                if info and not info.get('is_demo', False):
+                    user_id = info['user_id']
+                    log_request(
+                        user_id=user_id,
+                        api_key=x_api_key,
+                        path="/api/abstract-captcha",
+                        api_type="abstract",
+                        method="POST",
+                        status_code=200,
+                        response_time=response_time
+                    )
+                    log_request_to_request_logs(
+                        user_id=user_id,
+                        api_key=x_api_key,
+                        path="/api/abstract-captcha",
+                        api_type="abstract",
+                        method="POST",
+                        status_code=200,
+                        response_time=response_time,
+                        user_agent=None
+                    )
+                    
+                    # 일별 통계 업데이트 (전역)
+                    update_daily_api_stats("abstract", True, response_time)
+                    
+                    # 사용자별 일별 통계 업데이트
+                    update_daily_api_stats_by_key(
+                        user_id=user_id,
+                        api_key=x_api_key,
+                        api_type="abstract",
+                        response_time=response_time,
+                        is_success=True
+                    )
+                    
+                    print(f"📝 [/api/abstract-captcha] 로그 및 통계 저장 완료")
+        except Exception as e:
+            print(f"⚠️ 로그 저장 실패: {e}")
+        
+        return result
+    except Exception as e:
+        response_time = int((time.time() - start_time) * 1000)
+        
+        # 에러 로그 저장
+        try:
+            if x_api_key:
+                DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
+                info = verify_api_key_auto_secret(x_api_key)
+                if info and not info.get('is_demo', False):
+                    user_id = info['user_id']
+                    log_request(
+                        user_id=user_id,
+                        api_key=x_api_key,
+                        path="/api/abstract-captcha",
+                        api_type="abstract",
+                        method="POST",
+                        status_code=500,
+                        response_time=response_time
+                    )
+                    log_request_to_request_logs(
+                        user_id=user_id,
+                        api_key=x_api_key,
+                        path="/api/abstract-captcha",
+                        api_type="abstract",
+                        method="POST",
+                        status_code=500,
+                        response_time=response_time,
+                        user_agent=None
+                    )
+                    
+                    # 일별 통계 업데이트 - 실패
+                    update_daily_api_stats("abstract", False, response_time)
+                    
+                    # 사용자별 일별 통계 업데이트 - 실패
+                    update_daily_api_stats_by_key(
+                        user_id=user_id,
+                        api_key=x_api_key,
+                        api_type="abstract",
+                        response_time=response_time,
+                        is_success=False
+                    )
+                    
+                    print(f"📝 [/api/abstract-captcha] 에러 로그 및 통계 저장 완료")
+        except Exception:
+            pass
+        
+        raise HTTPException(status_code=500, detail=f"Abstract captcha creation failed: {str(e)}")
 
 

@@ -188,8 +188,8 @@ def verify_captcha(
     if not token_valid:
         raise HTTPException(status_code=400, detail="캡차 토큰이 유효하지 않거나 만료되었습니다.")
     
-    # API 키 사용량 업데이트 (캡차 타입별)
-    update_api_key_usage(api_key_info['api_key_id'], captcha_type)
+    # API 키 사용량 업데이트는 challenge 엔드포인트에서만 처리
+    # update_api_key_usage(api_key_info['api_key_id'], captcha_type)
     
     # 성공 응답
     response_time = int((datetime.now() - start_time).total_seconds() * 1000)
