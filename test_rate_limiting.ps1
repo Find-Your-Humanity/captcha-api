@@ -178,3 +178,5 @@ $burstRateLimited = ($burstResults | Where-Object { $_.StatusCode -eq 429 }).Cou
 
 Write-Host ""
 Write-Host "📊 Burst 테스트 결과: 성공 $burstSuccessful, Rate Limited $burstRateLimited, 실패 $($3 - $burstSuccessful - $burstRateLimited)" -ForegroundColor Cyan
+
+
