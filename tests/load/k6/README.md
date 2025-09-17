@@ -38,7 +38,7 @@
 시나리오 설명
 - next: /api/next-captcha (행동 데이터 기반 다음 캡차 결정)
 - image: /api/image-challenge (그리드형 발급)
-- abstract: /api/abstract-challenge (추상 이미지 발급)
+- abstract: /api/abstract-captcha (추상 이미지 발급)
 - handwriting: /api/handwriting-challenge (손글씨 발급)
 - mix: 50% next, 30% image, 10% abstract, 10% handwriting
 
