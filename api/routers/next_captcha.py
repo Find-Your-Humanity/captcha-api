@@ -504,8 +504,8 @@ def next_captcha(
     #         captcha_type = ""  # 에러 상태로 설정
         # 데스크톱 환경: 모든 경우에 handwritingcaptcha로 설정
         # print(f"🎯 모든 경우에 handwritingcaptcha로 설정 (신뢰도: {confidence_score})")
-        next_captcha_value = "handwritingcaptcha"
-        captcha_type = "handwriting"
+        next_captcha_value = "imagecaptcha"
+        captcha_type = "image"
 
     # 안전 기본값 초기화 (예외 상황 방지)
     captcha_token: Optional[str] = None
