@@ -62,10 +62,10 @@ COPY utils/ ./utils/
 EXPOSE 80
 
 # 헬스체크 추가
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:80/health || exit 1
+#HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+#    CMD curl -f http://localhost:80/health || exit 1
 
 # 실행 명령
 # Gunicorn을 프로세스 매니저로 사용하여 여러 Uvicorn 워커를 실행
 # --workers 수는 (CPU 코어 수 * 2) + 1 공식을 참고하여 설정
-CMD ["gunicorn", "main:app", "--workers", "9", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:80"]
+CMD ["ddtrace-run", "gunicorn", "main:app", "--workers", "9", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:80"]
