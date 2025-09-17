@@ -198,6 +198,28 @@ def next_captcha(
     # 클라이언트 IP 추출
     client_ip = ip_rate_limiter.get_client_ip(http_request)
     print(f"🌐 클라이언트 IP: {client_ip}")
+
+    # 실행 차단 가드: suspicious_ips 테이블에서 is_blocked=1이면 즉시 차단
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT 1
+                    FROM suspicious_ips
+                    WHERE api_key = %s AND ip_address = %s AND is_blocked = 1
+                    LIMIT 1
+                    """,
+                    (x_api_key or '', client_ip or '')
+                )
+                if cursor.fetchone():
+                    print(f"🚫 실행 차단: api_key={ (x_api_key or '')[:20] }..., ip={client_ip}")
+                    raise HTTPException(status_code=403, detail="차단된 IP입니다.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        # 가드 체크 실패 시에는 로깅만 하고 계속 진행(fail-open)
+        print(f"⚠️ 실행 차단 가드 확인 실패(무시): {e}")
     
     # IP 기반 Rate Limiting 체크
     print(f"🔍 IP Rate Limiting 시작: IP={client_ip}, API_KEY={x_api_key[:20] if x_api_key else 'None'}...")
