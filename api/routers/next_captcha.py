@@ -483,7 +483,7 @@ def next_captcha(
         print("📱 모바일 환경: 체크박스만 표시, 다음 캡차 단계 없음")
         next_captcha_value = None  # 다음 캡차 없음
         captcha_type = "pass"      # 통과 처리
-    # else:
+    else:
     #       # 데스크톱 환경: 신뢰도 점수에 따른 캡차 타입 결정
     #     if confidence_score <= 10:
     #         next_captcha_value = None  # 0-10점: 통과
