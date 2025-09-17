@@ -7,3 +7,5 @@ CREATE INDEX idx_suspicious_ips_time ON suspicious_ips(last_violation_time);
 
 -- ip_violation_stats 테이블 인덱스  
 CREATE INDEX idx_ip_violation_stats_updated ON ip_violation_stats(last_updated);
+
+

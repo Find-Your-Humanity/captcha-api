@@ -214,7 +214,7 @@ def next_captcha(
                 )
                 if cursor.fetchone():
                     print(f"🚫 실행 차단: api_key={ (x_api_key or '')[:20] }..., ip={client_ip}")
-                    raise HTTPException(status_code=403, detail="IP is blocked for this API key")
+                    raise HTTPException(status_code=403, detail="차단된 IP입니다.")
     except HTTPException:
         raise
     except Exception as e:
