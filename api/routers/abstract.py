@@ -129,7 +129,7 @@ async def verify(
     return result
 
 
-@router.post("/api/abstract-captcha")
+@router.post("/api/abstract-challenge")
 def create(
     x_api_key: Optional[str] = Header(None),
     x_secret_key: Optional[str] = Header(None),
@@ -272,7 +272,7 @@ def create(
                     log_request(
                         user_id=user_id,
                         api_key=x_api_key,
-                        path="/api/abstract-captcha",
+                        path="/api/abstract-challenge",
                         api_type="abstract",
                         method="POST",
                         status_code=200,
@@ -281,7 +281,7 @@ def create(
                     log_request_to_request_logs(
                         user_id=user_id,
                         api_key=x_api_key,
-                        path="/api/abstract-captcha",
+                        path="/api/abstract-challenge",
                         api_type="abstract",
                         method="POST",
                         status_code=200,
@@ -310,7 +310,7 @@ def create(
                     log_request(
                         user_id=user_id,
                         api_key=x_api_key,
-                        path="/api/abstract-captcha",
+                        path="/api/abstract-challenge",
                         api_type="abstract",
                         method="POST",
                         status_code=500,
@@ -319,7 +319,7 @@ def create(
                     log_request_to_request_logs(
                         user_id=user_id,
                         api_key=x_api_key,
-                        path="/api/abstract-captcha",
+                        path="/api/abstract-challenge",
                         api_type="abstract",
                         method="POST",
                         status_code=500,

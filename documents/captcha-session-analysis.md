@@ -13,7 +13,7 @@
 ### 1.1 Abstract 캡차
 - 세션 자료구조: `AbstractCaptchaSession` (lines 94–105)
 - 전역 저장소: `ABSTRACT_SESSIONS` + `ABSTRACT_SESSIONS_LOCK` (lines 110–112)
-- 생성 엔드포인트: `/api/abstract-captcha` (lines 925–1114)
+- 생성 엔드포인트: `/api/abstract-challenge` (lines 925–1114)
   - 9개의 이미지 후보와 `is_positive` 플래그 배열을 생성 후, `challenge_id`를 키로 메모리에 저장 (lines 1068–1083)
 - 검증 엔드포인트: `/api/abstract-verify` (lines 1116–1182)
   - 메모리에서 `challenge_id`로 세션 조회 (lines 1118–1121)

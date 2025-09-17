@@ -325,7 +325,7 @@ else:
   - PowerShell: `docker run -p 6379:6379 --name rc-redis -d redis:7`
   - .env: `REDIS_HOST=localhost`, `REDIS_PORT=6379`, `REDIS_SSL=false`, `USE_REDIS=true`
 - Postman/curl 테스트 시나리오:
-  1) /api/abstract-captcha 호출 → challenge_id 수신
+  1) /api/abstract-challenge 호출 → challenge_id 수신
   2) Redis에서 키 존재 확인 → 값 TTL 확인
   3) /api/abstract-verify 로 오답 시도 2회 → attempts 증가 및 키 삭제 확인
 

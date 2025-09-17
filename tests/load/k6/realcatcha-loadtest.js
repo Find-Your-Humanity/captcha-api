@@ -188,7 +188,7 @@ function postImageChallenge() {
 // 추상(abstract) 캡차 문제 생성 엔드포인트 호출.
 // - 인증 없이 접근 가능한 공개 엔드포인트로, 응답 시간/상태 코드/메트릭을 기록합니다.
 function postAbstractCaptcha() {
-  const url = `${BASE_URL}/api/abstract-captcha`;
+  const url = `${BASE_URL}/api/abstract-challenge`;
   const start = new Date();
   const res = http.post(url, null, {headers: headers(false)}); // 인증 불필요 (공개 엔드포인트)
   const duration = new Date() - start;
