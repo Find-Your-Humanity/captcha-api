@@ -533,25 +533,26 @@ def next_captcha(
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
-        "confidence_score": confidence_score,
         "captcha_type": captcha_type,
         "next_captcha": next_captcha_value,
         "captcha_token": captcha_token,
-        "behavior_data_received": len(str(behavior_data)) > 0,
-        "ml_service_used": ML_SERVICE_USED,
-        "is_bot_detected": is_bot if ML_SERVICE_USED else None,
-        "session_id": checkbox_session_id,
-        "is_blocked": False,
-        "attempts": session_data.get("attempts", 0) if session_data else 0,
-        "low_score_attempts": session_data.get("low_score_attempts", 0) if session_data else 0
+        "is_blocked": False
+        # 🔒 보안 강화: 민감 정보 제거
+        # - confidence_score: AI 점수 (제거)
+        # - behavior_data_received: 행동 데이터 수신 여부 (제거)
+        # - ml_service_used: ML 서비스 사용 여부 (제거)
+        # - is_bot_detected: 봇 탐지 결과 (제거)
+        # - session_id: 세션 ID (제거)
+        # - attempts: 시도 횟수 (제거)
+        # - low_score_attempts: 낮은 점수 시도 횟수 (제거)
     }
     try:
+        # 🔒 보안 강화: 로그에서도 민감 정보 제거
         preview = {
             "captcha_type": captcha_type,
             "next_captcha": next_captcha_value,
-            "confidence_score": confidence_score,
-            "ml_service_used": ML_SERVICE_USED,
-            "is_bot_detected": is_bot if ML_SERVICE_USED else None,
+            "status": "success"
+            # 민감 정보는 로그에서도 제거
         }
         print(f"📦 [/api/next-captcha] response: {json.dumps(preview, ensure_ascii=False)}")
     except Exception:

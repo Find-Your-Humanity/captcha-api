@@ -31,9 +31,9 @@ def create_handwriting_challenge(samples: list[str], target_class: str) -> dict:
     return {
         "challenge_id": challenge_id,
         "samples": samples,
-        "answer_classes": answer_classes,
         "ttl": ttl_seconds,
         "message": "Handwriting challenge created successfully",
+        # 🔒 보안 강화: answer_classes 제거 (정답 정보 노출 방지)
     }
 
 
