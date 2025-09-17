@@ -404,7 +404,7 @@ def next_captcha(
         # 🔍 ML service 응답 전체 디버깅
         print(f"🔍 ML service 전체 응답: {json.dumps(infer_res, ensure_ascii=False)}")
         
-        confidence_score = float(infer_res.get("score", 50.0))
+        confidence_score = float(infer_res.get("confidence_score", 50.0))
         is_bot = bool(infer_res.get("is_bot", False))
         ML_SERVICE_USED = True
         print(f"🤖 ml-service(best_model) 결과: score={confidence_score:.2f}, is_bot={is_bot}")
