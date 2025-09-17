@@ -83,15 +83,6 @@ def create_image_challenge(
             # 일별 통계 업데이트 (전역)
             update_daily_api_stats("imagecaptcha", True, response_time)
             
-            # 사용자별 일별 통계 업데이트
-            update_daily_api_stats_by_key(
-                user_id=api_key_info['user_id'],
-                api_key=x_api_key,
-                api_type="imagecaptcha",
-                response_time=response_time,
-                is_success=True
-            )
-            
             print(f"📝 [/api/image-challenge] 로그 및 통계 저장 완료")
         
         return result
@@ -126,15 +117,6 @@ def create_image_challenge(
             
             # 일별 통계 업데이트 (전역) - 실패
             update_daily_api_stats("imagecaptcha", False, response_time)
-            
-            # 사용자별 일별 통계 업데이트 - 실패
-            update_daily_api_stats_by_key(
-                user_id=api_key_info['user_id'],
-                api_key=x_api_key,
-                api_type="imagecaptcha",
-                response_time=response_time,
-                is_success=False
-            )
             
             print(f"📝 [/api/image-challenge] 에러 로그 및 통계 저장 완료")
         

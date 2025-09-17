@@ -380,13 +380,6 @@ async def create_handwriting(
                     )
                     # 일별 통계 업데이트
                     update_daily_api_stats("handwriting", True, response_time)
-                    update_daily_api_stats_by_key(
-                        user_id=user_id,
-                        api_key=x_api_key,
-                        api_type="handwriting",
-                        response_time=response_time,
-                        is_success=True
-                    )
         except Exception:
             pass
 
@@ -419,13 +412,6 @@ async def create_handwriting(
                         user_agent=None
                     )
                     update_daily_api_stats("handwriting", False, response_time)
-                    update_daily_api_stats_by_key(
-                        user_id=user_id,
-                        api_key=x_api_key,
-                        api_type="handwriting",
-                        response_time=response_time,
-                        is_success=False
-                    )
         except Exception:
             pass
         raise

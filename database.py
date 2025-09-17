@@ -436,18 +436,32 @@ def update_api_key_usage(api_key_id: int, captcha_type: str = None):
 
 def log_request(user_id: int, api_key: str, path: str, api_type: str, method: str, status_code: int, response_time: int):
     """
-    API 요청 로그 저장 (api_request_logs 테이블)
+    API 요청 로그 저장 (api_request_logs 테이블) 및 daily_user_api_stats 업데이트
     """
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
+                # api_request_logs에 로그 저장
                 cursor.execute("""
                     INSERT INTO api_request_logs 
                     (user_id, api_key, path, api_type, method, status_code, response_time, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
                 """, (user_id, api_key, path, api_type, method, status_code, response_time))
+                
+                # daily_user_api_stats 테이블도 함께 업데이트
+                is_success = (status_code == 200)
+                cursor.execute("""
+                    INSERT INTO daily_user_api_stats (date, user_id, api_key, api_type, total_requests, successful_requests, failed_requests, avg_response_time)
+                    VALUES (CURDATE(), %s, %s, %s, 1, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        total_requests = total_requests + 1,
+                        successful_requests = successful_requests + %s,
+                        failed_requests = failed_requests + %s,
+                        avg_response_time = (avg_response_time * (total_requests - 1) + %s) / total_requests
+                """, (user_id, api_key, api_type, 1 if is_success else 0, 0 if is_success else 1, response_time, 1 if is_success else 0, 0 if is_success else 1, response_time))
+                
     except Exception as e:
-        print(f"API 요청 로그 저장 오류: {e}")
+        print(f"API 요청 로그 및 통계 저장 오류: {e}")
 
 def log_request_to_request_logs(user_id: int, api_key: str, path: str, api_type: str, method: str, status_code: int, response_time: int, user_agent: str = None):
     """
