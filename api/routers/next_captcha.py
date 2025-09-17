@@ -472,7 +472,7 @@ def next_captcha(
         elif confidence_score <= 40:
             next_captcha_value = "abstractcaptcha"  # 26-40점: 추상 이미지 캡차
             captcha_type = "abstract"
-        elif confidence_score <= 95:
+        elif confidence_score <= 90:
             next_captcha_value = "handwritingcaptcha"  # 41-95점: 손글씨 캡차
             captcha_type = "handwriting"
         else:   
