@@ -127,6 +127,14 @@ async def startup_event():
     initialize_captcha_type_columns()
     initialize_logging_and_stats_tables()
 
+@app.get("/live")
+async def live():
+    return {"status": "ok"}
+
+@app.get("/ready")
+async def ready():
+    return {"status": "ok"}
+
 app.include_router(next_captcha_router)
 app.include_router(handwriting_router)
 app.include_router(abstract_router)
