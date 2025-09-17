@@ -578,17 +578,20 @@ def next_captcha(
                 user_agent=None
             )
             
-            # 일별 통계 업데이트 (전역) - 실제 captcha_type 사용
-            update_daily_api_stats(captcha_type, True, 0)
-            
-            # 사용자별 일별 통계 업데이트 - 실제 captcha_type 사용
-            update_daily_api_stats_by_key(
-                user_id=api_key_info['user_id'],
-                api_key=x_api_key,
-                api_type=captcha_type,  # 실제 결정된 captcha_type 사용
-                response_time=0,
-                is_success=True
-            )
+            # 사용량 카운팅 정책
+            # - pass일 때만 next-captcha에서 1회 카운트
+            # - image/abstract/handwriting는 챌린지 생성 시점에서만 카운트
+            if captcha_type == "pass":
+                # 일별 통계 업데이트 (전역)
+                update_daily_api_stats(captcha_type, True, 0)
+                # 사용자별 일별 통계 업데이트
+                update_daily_api_stats_by_key(
+                    user_id=api_key_info['user_id'],
+                    api_key=x_api_key,
+                    api_type=captcha_type,
+                    response_time=0,
+                    is_success=True
+                )
             
             print(f"📝 [/api/next-captcha] 로그 및 통계 저장 완료")
     except Exception as e:

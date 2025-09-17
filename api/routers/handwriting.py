@@ -8,6 +8,7 @@ import httpx
 from services.handwriting_service import verify_handwriting, create_handwriting_challenge
 from schemas.requests import HandwritingVerifyRequest
 from database import verify_api_key_with_secret, verify_api_key_auto_secret, verify_captcha_token
+from database import log_request, log_request_to_request_logs, update_daily_api_stats, update_daily_api_stats_by_key
 from config.settings import (
     CAPTCHA_TTL,
     USE_REDIS,
@@ -201,12 +202,35 @@ async def verify(
     
     # DB 로깅: 성공/실패 요청
     status_code = 200 if result.get("success") else 400
-    await track_api_usage(
-        api_key=x_api_key,
-        endpoint="/api/handwriting-verify",
-        status_code=status_code,
-        response_time=int((time.time() - start_time) * 1000)
-    )
+
+    # 정책: 검증 API는 카운트하지 않음. 상세 로그(request_logs)만 남김
+    try:
+        user_id = None
+        try:
+            from database import get_db_cursor
+            with get_db_cursor() as cursor:
+                cursor.execute("""
+                    SELECT user_id FROM api_keys WHERE key_id = %s LIMIT 1
+                """, (x_api_key,))
+                row = cursor.fetchone()
+                if row and (row.get("user_id") is not None):
+                    user_id = int(row.get("user_id"))
+        except Exception:
+            user_id = None
+
+        from database import log_request_to_request_logs
+        log_request_to_request_logs(
+            user_id=user_id or 0,
+            api_key=x_api_key,
+            path="/api/handwriting-verify",
+            api_type="handwriting",
+            method="POST",
+            status_code=status_code,
+            response_time=int((time.time() - start_time) * 1000),
+            user_agent=None
+        )
+    except Exception:
+        pass
     
     if result.get("success") and SUCCESS_REDIRECT_URL:
         result["redirect_url"] = SUCCESS_REDIRECT_URL
@@ -315,6 +339,95 @@ async def create_handwriting(
         samples = []
         target_class = ""
 
-    return create_handwriting_challenge(samples, target_class)
+    import time
+    start_time = time.time()
+    try:
+        result = create_handwriting_challenge(samples, target_class)
+        response_time = int((time.time() - start_time) * 1000)
+
+        # 일반 키인 경우에만 카운트/로그 (데모는 사용량 제외 정책)
+        try:
+            if x_api_key:
+                DEMO_PUBLIC_KEY = 'rc_live_f49a055d62283fd02e8203ccaba70fc2'
+                is_demo = False
+                if x_api_key == DEMO_PUBLIC_KEY:
+                    info = verify_api_key_auto_secret(x_api_key)
+                    is_demo = bool(info and info.get('is_demo'))
+                else:
+                    info = verify_api_key_auto_secret(x_api_key)
+                if info and not is_demo:
+                    user_id = info['user_id']
+                    # 상세 로그 저장
+                    log_request(
+                        user_id=user_id,
+                        api_key=x_api_key,
+                        path="/api/handwriting-challenge",
+                        api_type="handwriting",
+                        method="POST",
+                        status_code=200,
+                        response_time=response_time
+                    )
+                    # request_logs 저장
+                    log_request_to_request_logs(
+                        user_id=user_id,
+                        api_key=x_api_key,
+                        path="/api/handwriting-challenge",
+                        api_type="handwriting",
+                        method="POST",
+                        status_code=200,
+                        response_time=response_time,
+                        user_agent=None
+                    )
+                    # 일별 통계 업데이트
+                    update_daily_api_stats("handwriting", True, response_time)
+                    update_daily_api_stats_by_key(
+                        user_id=user_id,
+                        api_key=x_api_key,
+                        api_type="handwriting",
+                        response_time=response_time,
+                        is_success=True
+                    )
+        except Exception:
+            pass
+
+        return result
+    except Exception as e:
+        response_time = int((time.time() - start_time) * 1000)
+        # 실패 로그(일반 키만)
+        try:
+            if x_api_key:
+                info = verify_api_key_auto_secret(x_api_key)
+                if info and not info.get('is_demo', False):
+                    user_id = info['user_id']
+                    log_request(
+                        user_id=user_id,
+                        api_key=x_api_key,
+                        path="/api/handwriting-challenge",
+                        api_type="handwriting",
+                        method="POST",
+                        status_code=500,
+                        response_time=response_time
+                    )
+                    log_request_to_request_logs(
+                        user_id=user_id,
+                        api_key=x_api_key,
+                        path="/api/handwriting-challenge",
+                        api_type="handwriting",
+                        method="POST",
+                        status_code=500,
+                        response_time=response_time,
+                        user_agent=None
+                    )
+                    update_daily_api_stats("handwriting", False, response_time)
+                    update_daily_api_stats_by_key(
+                        user_id=user_id,
+                        api_key=x_api_key,
+                        api_type="handwriting",
+                        response_time=response_time,
+                        is_success=False
+                    )
+        except Exception:
+            pass
+        raise
 
 
