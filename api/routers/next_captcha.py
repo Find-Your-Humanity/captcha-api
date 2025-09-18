@@ -226,7 +226,7 @@ def next_captcha(
     try:
         ip_rate_limit_result = ip_rate_limiter.check_ip_rate_limit(
             ip_address=client_ip,
-            rate_limit_per_minute=10,  # IP당 분당 10회 (테스트용)
+            rate_limit_per_minute=50,  # IP당 분당 10회 (테스트용)
             rate_limit_per_hour=500,   # IP당 시간당 500회
             rate_limit_per_day=2000,   # IP당 일당 2000회
             api_key=x_api_key          # API 키 전달 (MySQL 저장용)
@@ -468,7 +468,7 @@ def next_captcha(
     if session_result.get("is_blocked", False):
         print(f"🚫 봇 차단: 세션 {checkbox_session_id}")
         return {
-            "message": "봇으로 의심됩니다. 다시 확인해주세요.",
+            "message": "Session blocked due to repeated low confidence scores",
             "status": "blocked",
             "is_disabled": True,
             "error_message": "봇으로 의심됩니다. 다시 확인해주세요.",
