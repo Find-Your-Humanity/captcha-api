@@ -78,13 +78,34 @@ async def verify(
     try:
         image_bytes = base64.b64decode(base64_str)
     except Exception as e:
-        # DB 로깅: 실패한 요청
-        await track_api_usage(
-            api_key=x_api_key,
-            endpoint="/api/handwriting-verify",
-            status_code=400,
-            response_time=int((time.time() - start_time) * 1000)
-        )
+        # DB 로깅: 실패한 요청 (중복 방지를 위해 request_logs에만 기록)
+        try:
+            user_id = None
+            try:
+                from database import get_db_cursor
+                with get_db_cursor() as cursor:
+                    cursor.execute("""
+                        SELECT user_id FROM api_keys WHERE key_id = %s LIMIT 1
+                    """, (x_api_key,))
+                    row = cursor.fetchone()
+                    if row and (row.get("user_id") is not None):
+                        user_id = int(row.get("user_id"))
+            except Exception:
+                user_id = None
+
+            from database import log_request_to_request_logs
+            log_request_to_request_logs(
+                user_id=user_id or 0,
+                api_key=x_api_key,
+                path="/api/handwriting-verify",
+                api_type="handwriting",
+                method="POST",
+                status_code=400,
+                response_time=int((time.time() - start_time) * 1000),
+                user_agent=None
+            )
+        except Exception:
+            pass
         return {"success": False, "message": f"Invalid base64 image: {e}"}
 
     # 디버그 저장
@@ -102,13 +123,34 @@ async def verify(
 
     # 2) OCR API 호출
     if not OCR_API_URL:
-        # DB 로깅: 설정 오류
-        await track_api_usage(
-            api_key=x_api_key,
-            endpoint="/api/handwriting-verify",
-            status_code=500,
-            response_time=int((time.time() - start_time) * 1000)
-        )
+        # DB 로깅: 설정 오류 (중복 방지를 위해 request_logs에만 기록)
+        try:
+            user_id = None
+            try:
+                from database import get_db_cursor
+                with get_db_cursor() as cursor:
+                    cursor.execute("""
+                        SELECT user_id FROM api_keys WHERE key_id = %s LIMIT 1
+                    """, (x_api_key,))
+                    row = cursor.fetchone()
+                    if row and (row.get("user_id") is not None):
+                        user_id = int(row.get("user_id"))
+            except Exception:
+                user_id = None
+
+            from database import log_request_to_request_logs
+            log_request_to_request_logs(
+                user_id=user_id or 0,
+                api_key=x_api_key,
+                path="/api/handwriting-verify",
+                api_type="handwriting",
+                method="POST",
+                status_code=500,
+                response_time=int((time.time() - start_time) * 1000),
+                user_agent=None
+            )
+        except Exception:
+            pass
         return {"success": False, "message": "OCR_API_URL is not configured on server."}
 
     def _call_ocr_multipart(lexicon_list: Optional[List[str]] = None):
@@ -139,13 +181,34 @@ async def verify(
         resp.raise_for_status()
         ocr_json = resp.json()
     except Exception as e:
-        # DB 로깅: OCR 실패
-        await track_api_usage(
-            api_key=x_api_key,
-            endpoint="/api/handwriting-verify",
-            status_code=500,
-            response_time=int((time.time() - start_time) * 1000)
-        )
+        # DB 로깅: OCR 실패 (중복 방지를 위해 request_logs에만 기록)
+        try:
+            user_id = None
+            try:
+                from database import get_db_cursor
+                with get_db_cursor() as cursor:
+                    cursor.execute("""
+                        SELECT user_id FROM api_keys WHERE key_id = %s LIMIT 1
+                    """, (x_api_key,))
+                    row = cursor.fetchone()
+                    if row and (row.get("user_id") is not None):
+                        user_id = int(row.get("user_id"))
+            except Exception:
+                user_id = None
+
+            from database import log_request_to_request_logs
+            log_request_to_request_logs(
+                user_id=user_id or 0,
+                api_key=x_api_key,
+                path="/api/handwriting-verify",
+                api_type="handwriting",
+                method="POST",
+                status_code=500,
+                response_time=int((time.time() - start_time) * 1000),
+                user_agent=None
+            )
+        except Exception:
+            pass
         return {"success": False, "message": f"OCR API request failed: {e}"}
 
     # 3) 텍스트 추출 및 정규화
@@ -157,13 +220,34 @@ async def verify(
             or (ocr_json.get("result", {}) or {}).get("text")
         )
     if not extracted or not isinstance(extracted, str):
-        # DB 로깅: OCR 응답 오류
-        await track_api_usage(
-            api_key=x_api_key,
-            endpoint="/api/handwriting-verify",
-            status_code=500,
-            response_time=int((time.time() - start_time) * 1000)
-        )
+        # DB 로깅: OCR 응답 오류 (중복 방지를 위해 request_logs에만 기록)
+        try:
+            user_id = None
+            try:
+                from database import get_db_cursor
+                with get_db_cursor() as cursor:
+                    cursor.execute("""
+                        SELECT user_id FROM api_keys WHERE key_id = %s LIMIT 1
+                    """, (x_api_key,))
+                    row = cursor.fetchone()
+                    if row and (row.get("user_id") is not None):
+                        user_id = int(row.get("user_id"))
+            except Exception:
+                user_id = None
+
+            from database import log_request_to_request_logs
+            log_request_to_request_logs(
+                user_id=user_id or 0,
+                api_key=x_api_key,
+                path="/api/handwriting-verify",
+                api_type="handwriting",
+                method="POST",
+                status_code=500,
+                response_time=int((time.time() - start_time) * 1000),
+                user_agent=None
+            )
+        except Exception:
+            pass
         return {"success": False, "message": "OCR API response missing text field"}
 
     text_norm = normalize_text(extracted)

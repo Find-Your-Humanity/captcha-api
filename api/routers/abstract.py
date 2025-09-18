@@ -82,25 +82,69 @@ async def verify(
         # 라우터 레벨에서 간단 길이 검증 (실제 길이는 서비스 내부 doc/image_urls 기반으로 재확인)
         for i, sig in enumerate(req.signatures):
             if not isinstance(sig, str):
-                # DB 로깅: 서명 검증 실패
-                await track_api_usage(
-                    api_key=x_api_key,
-                    endpoint="/api/abstract-verify",
-                    status_code=400,
-                    response_time=int((time.time() - start_time) * 1000)
-                )
+                # DB 로깅: 서명 검증 실패 (중복 방지를 위해 request_logs에만 기록)
+                try:
+                    user_id = None
+                    try:
+                        from database import get_db_cursor
+                        with get_db_cursor() as cursor:
+                            cursor.execute("""
+                                SELECT user_id FROM api_keys WHERE key_id = %s LIMIT 1
+                            """, (x_api_key,))
+                            row = cursor.fetchone()
+                            if row and (row.get("user_id") is not None):
+                                user_id = int(row.get("user_id"))
+                    except Exception:
+                        user_id = None
+
+                    from database import log_request_to_request_logs
+                    log_request_to_request_logs(
+                        user_id=user_id or 0,
+                        api_key=x_api_key,
+                        path="/api/abstract-verify",
+                        api_type="abstract",
+                        method="POST",
+                        status_code=400,
+                        response_time=int((time.time() - start_time) * 1000),
+                        user_agent=None
+                    )
+                except Exception:
+                    pass
                 return {"success": False, "message": "Invalid signature type"}
     
     result = verify_abstract(req.challenge_id, req.selections, user_id=req.user_id, api_key=x_api_key)
     
-    # DB 로깅: 성공/실패 요청
+    # DB 로깅: 성공/실패 요청 (중복 방지를 위해 request_logs에만 기록)
     status_code = 200 if result.get("success") else 400
-    await track_api_usage(
-        api_key=x_api_key,
-        endpoint="/api/abstract-verify",
-        status_code=status_code,
-        response_time=int((time.time() - start_time) * 1000)
-    )
+    
+    # request_logs에만 기록 (중복 방지)
+    try:
+        user_id = None
+        try:
+            from database import get_db_cursor
+            with get_db_cursor() as cursor:
+                cursor.execute("""
+                    SELECT user_id FROM api_keys WHERE key_id = %s LIMIT 1
+                """, (x_api_key,))
+                row = cursor.fetchone()
+                if row and (row.get("user_id") is not None):
+                    user_id = int(row.get("user_id"))
+        except Exception:
+            user_id = None
+
+        from database import log_request_to_request_logs
+        log_request_to_request_logs(
+            user_id=user_id or 0,
+            api_key=x_api_key,
+            path="/api/abstract-verify",
+            api_type="abstract",
+            method="POST",
+            status_code=status_code,
+            response_time=int((time.time() - start_time) * 1000),
+            user_agent=None
+        )
+    except Exception:
+        pass
     
     return result
 

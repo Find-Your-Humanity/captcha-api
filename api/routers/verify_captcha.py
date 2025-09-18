@@ -188,25 +188,23 @@ def verify_captcha(
     if not token_valid:
         raise HTTPException(status_code=400, detail="캡차 토큰이 유효하지 않거나 만료되었습니다.")
     
-    # API 키 사용량 업데이트는 challenge 엔드포인트에서만 처리
-    # update_api_key_usage(api_key_info['api_key_id'], captcha_type)
-    
-    # 성공 응답
+    # 실제 검증 로직이 없으므로 이 엔드포인트는 사용하지 않음
+    # 각 캡차 타입별 verify 엔드포인트를 사용해야 함
     response_time = int((datetime.now() - start_time).total_seconds() * 1000)
     
-    # 로그 저장
+    # 경고 로그 저장 (이 엔드포인트는 사용되지 않아야 함)
     log_request(
         user_id=api_key_info['user_id'],
         api_key=x_api_key,
         path="/api/verify-captcha",
         api_type="verify_captcha",
         method="POST",
-        status_code=200,
+        status_code=400,  # 잘못된 사용으로 400 반환
         response_time=response_time
     )
     
     return VerifyCaptchaResponse(
-        success=True,
-        message="Captcha verification successful",
+        success=False,
+        message="This endpoint is deprecated. Use specific verify endpoints like /api/imagecaptcha-verify, /api/abstract-verify, /api/handwriting-verify",
         timestamp=datetime.now().isoformat()
     )
