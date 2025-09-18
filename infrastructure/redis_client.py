@@ -154,43 +154,55 @@ def get_checkbox_session(session_id: str) -> dict:
     return redis_get_json(key)
 
 
-def increment_checkbox_attempts(session_id: str, is_low_score: bool = False, ttl: int = 300) -> dict:
+def increment_checkbox_attempts(session_id: str, is_bot_suspected: bool = False, ttl: int = 300) -> dict:
     """
     체크박스 시도 횟수를 증가시킵니다.
     
     Args:
         session_id: 세션 ID
-        is_low_score: confidence_score 9 이하 여부
+        is_bot_suspected: 봇으로 의심되는 시도 여부 (confidence_score >= 91)
         ttl: 세션 만료 시간 (초)
     
     Returns:
-        dict: 업데이트된 세션 데이터
+        dict: 업데이트된 세션 데이터 (status, is_disabled 포함)
     """
     r = get_redis()
     if not r:
-        return None
+        return {"status": "error", "is_disabled": False}
     
     try:
         key = rkey("checkbox_session", session_id)
         session_data = redis_get_json(key) or {}
         
-        # 시도 횟수 증가
+        # 전체 시도 횟수 증가
         session_data["attempts"] = session_data.get("attempts", 0) + 1
         session_data["last_attempt_at"] = time.time()
         
-        # 낮은 점수 시도 횟수 증가
-        if is_low_score:
-            session_data["low_score_attempts"] = session_data.get("low_score_attempts", 0) + 1
+        # 봇 의심 시도 처리
+        if is_bot_suspected:
+            session_data["bot_attempts"] = session_data.get("bot_attempts", 0) + 1
             
-            # 2-3번 시도 후에도 계속 낮은 점수면 차단
-            if session_data["low_score_attempts"] >= 3:
+            # 3번 시도 후 완전 차단
+            if session_data["bot_attempts"] >= 3:
                 session_data["is_blocked"] = True
+                session_data["status"] = "blocked"
+            else:
+                session_data["status"] = "bot_suspected"
+        else:
+            # 정상 시도
+            session_data["status"] = "success"
         
         # Redis에 저장
         redis_set_json(key, session_data, ttl)
-        return session_data
+        
+        # 응답 데이터 구성 (민감한 정보 제외)
+        return {
+            "status": session_data.get("status", "success"),
+            "is_disabled": session_data.get("is_blocked", False),
+            "is_blocked": session_data.get("is_blocked", False)
+        }
     except Exception:
-        return None
+        return {"status": "error", "is_disabled": False}
 
 
 def is_checkbox_session_blocked(session_id: str) -> bool:
