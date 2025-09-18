@@ -155,6 +155,9 @@ def create(
     x_secret_key: Optional[str] = Header(None),
     user_agent: Optional[str] = Header(None)
 ) -> Dict[str, Any]:
+    import time
+    start_time = time.time()
+    
     # User-Agent 디버깅 로그
     print(f"🔍 [AbstractCaptcha] User-Agent: {user_agent}")
     
@@ -276,6 +279,33 @@ def create(
     for idx, p in enumerate(final_paths):
         cdn_url = build_cdn_url(str(p), is_remote_source, asset_base_url=ASSET_BASE_URL, map_local_to_key=map_local_to_key)
         images.append({"id": idx, "url": cdn_url or ""})
-    return create_abstract_captcha([img["url"] for img in images], target_class, list(is_positive_flags), keywords)
+    
+    result = create_abstract_captcha([img["url"] for img in images], target_class, list(is_positive_flags), keywords)
+    
+    # API 요청 로그 저장 (api_request_logs에만 기록)
+    try:
+        if api_key_info and not api_key_info.get('is_demo', False):
+            from database import log_request, update_daily_api_stats
+            import time
+            
+            response_time = int((time.time() - start_time) * 1000)
+            log_request(
+                user_id=api_key_info['user_id'],
+                api_key=x_api_key,
+                path="/api/abstract-captcha",
+                api_type="abstract",
+                method="POST",
+                status_code=200,
+                response_time=response_time
+            )
+            
+            # 일별 통계 업데이트 (전역)
+            update_daily_api_stats("abstract", True, response_time)
+            
+            print(f"📝 [/api/abstract-captcha] 로그 및 통계 저장 완료")
+    except Exception as e:
+        print(f"⚠️ [/api/abstract-captcha] 로그 저장 실패: {e}")
+    
+    return result
 
 

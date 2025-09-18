@@ -55,9 +55,9 @@ def create_image_challenge(
         result = create_imagegrid_challenge()
         response_time = int((time.time() - start_time) * 1000)
         
-        # API 요청 로그 저장
+        # API 요청 로그 저장 (중복 방지를 위해 api_request_logs에만 기록)
         if api_key_info and not api_key_info.get('is_demo', False):
-            # api_request_logs 테이블에 로그 저장
+            # api_request_logs 테이블에만 로그 저장
             log_request(
                 user_id=api_key_info['user_id'],
                 api_key=x_api_key,
@@ -66,18 +66,6 @@ def create_image_challenge(
                 method="POST",
                 status_code=200,
                 response_time=response_time
-            )
-            
-            # request_logs 테이블에도 로그 저장
-            log_request_to_request_logs(
-                user_id=api_key_info['user_id'],
-                api_key=x_api_key,
-                path="/api/image-challenge",
-                api_type="imagecaptcha",
-                method="POST",
-                status_code=200,
-                response_time=response_time,
-                user_agent=None
             )
             
             # 일별 통계 업데이트 (전역)

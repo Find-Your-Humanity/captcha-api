@@ -441,7 +441,7 @@ async def create_handwriting(
                     info = verify_api_key_auto_secret(x_api_key)
                 if info and not is_demo:
                     user_id = info['user_id']
-                    # 상세 로그 저장
+                    # 상세 로그 저장 (중복 방지를 위해 api_request_logs에만 기록)
                     log_request(
                         user_id=user_id,
                         api_key=x_api_key,
@@ -450,17 +450,6 @@ async def create_handwriting(
                         method="POST",
                         status_code=200,
                         response_time=response_time
-                    )
-                    # request_logs 저장
-                    log_request_to_request_logs(
-                        user_id=user_id,
-                        api_key=x_api_key,
-                        path="/api/handwriting-challenge",
-                        api_type="handwriting",
-                        method="POST",
-                        status_code=200,
-                        response_time=response_time,
-                        user_agent=None
                     )
                     # 일별 통계 업데이트
                     update_daily_api_stats("handwriting", True, response_time)
@@ -484,16 +473,6 @@ async def create_handwriting(
                         method="POST",
                         status_code=500,
                         response_time=response_time
-                    )
-                    log_request_to_request_logs(
-                        user_id=user_id,
-                        api_key=x_api_key,
-                        path="/api/handwriting-challenge",
-                        api_type="handwriting",
-                        method="POST",
-                        status_code=500,
-                        response_time=response_time,
-                        user_agent=None
                     )
                     update_daily_api_stats("handwriting", False, response_time)
         except Exception:
