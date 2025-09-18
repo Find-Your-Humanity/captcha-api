@@ -83,15 +83,6 @@ def create_image_challenge(
             # 일별 통계 업데이트 (전역)
             update_daily_api_stats("imagecaptcha", True, response_time)
             
-            # 사용자별 일별 통계 업데이트
-            update_daily_api_stats_by_key(
-                user_id=api_key_info['user_id'],
-                api_key=x_api_key,
-                api_type="imagecaptcha",
-                response_time=response_time,
-                is_success=True
-            )
-            
             print(f"📝 [/api/image-challenge] 로그 및 통계 저장 완료")
         
         return result
@@ -126,15 +117,6 @@ def create_image_challenge(
             
             # 일별 통계 업데이트 (전역) - 실패
             update_daily_api_stats("imagecaptcha", False, response_time)
-            
-            # 사용자별 일별 통계 업데이트 - 실패
-            update_daily_api_stats_by_key(
-                user_id=api_key_info['user_id'],
-                api_key=x_api_key,
-                api_type="imagecaptcha",
-                response_time=response_time,
-                is_success=False
-            )
             
             print(f"📝 [/api/image-challenge] 에러 로그 및 통계 저장 완료")
         
@@ -187,12 +169,35 @@ async def verify_image_grid(
     
     # DB 로깅: 성공/실패 요청
     status_code = 200 if result.get("success") else 400
-    await track_api_usage(
-        api_key=x_api_key,
-        endpoint="/api/imagecaptcha-verify",
-        status_code=status_code,
-        response_time=int((time.time() - start_time) * 1000)
-    )
+
+    # 정책: 검증 API는 카운트하지 않음. 상세 로그(request_logs)만 남김
+    try:
+        user_id = None
+        try:
+            from database import get_db_cursor
+            with get_db_cursor() as cursor:
+                cursor.execute("""
+                    SELECT user_id FROM api_keys WHERE key_id = %s LIMIT 1
+                """, (x_api_key,))
+                row = cursor.fetchone()
+                if row and (row.get("user_id") is not None):
+                    user_id = int(row.get("user_id"))
+        except Exception:
+            user_id = None
+
+        # request_logs에만 기록
+        log_request_to_request_logs(
+            user_id=user_id or 0,
+            api_key=x_api_key,
+            path="/api/imagecaptcha-verify",
+            api_type="imagecaptcha",
+            method="POST",
+            status_code=status_code,
+            response_time=int((time.time() - start_time) * 1000),
+            user_agent=None
+        )
+    except Exception:
+        pass
     
     return result
 

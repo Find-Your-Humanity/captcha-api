@@ -515,8 +515,8 @@ def next_captcha(
             captcha_type = ""  # 에러 상태로 설정
         # 데스크톱 환경: 모든 경우에 handwritingcaptcha로 설정
         # print(f"🎯 모든 경우에 handwritingcaptcha로 설정 (신뢰도: {confidence_score})")
-        # next_captcha_value = None
-        # captcha_type = "pass"
+        # next_captcha_value = "handwritingcaptcha"
+        # captcha_type = "handwriting"
 
     # 안전 기본값 초기화 (예외 상황 방지)
     captcha_token: Optional[str] = None
@@ -559,26 +559,26 @@ def next_captcha(
     except Exception:
         pass
     
-    # API 요청 로그 저장
+    # API 요청 로그 저장 (pass일 때만)
     try:
-        if api_key_info and not api_key_info.get('is_demo', False):
-            # 상세 로그 저장 (api_request_logs 테이블) - 실제 captcha_type 사용
+        if api_key_info and not api_key_info.get('is_demo', False) and captcha_type == "pass":
+            # pass일 때만 api_request_logs에 기록 (다른 타입은 각 challenge 엔드포인트에서 기록)
             log_request(
                 user_id=api_key_info['user_id'],
                 api_key=x_api_key,
                 path="/api/next-captcha",
-                api_type=captcha_type,  # 실제 결정된 captcha_type 사용
+                api_type=captcha_type,  # "pass"
                 method="POST",
                 status_code=200,
                 response_time=0  # next-captcha는 응답시간 측정하지 않음
             )
             
-            # request_logs 테이블에도 로그 저장 - 실제 captcha_type 사용
+            # request_logs 테이블에도 로그 저장
             log_request_to_request_logs(
                 user_id=api_key_info['user_id'],
                 api_key=x_api_key,
                 path="/api/next-captcha",
-                api_type=captcha_type,  # 실제 결정된 captcha_type 사용
+                api_type=captcha_type,  # "pass"
                 method="POST",
                 status_code=200,
                 response_time=0,
@@ -588,14 +588,7 @@ def next_captcha(
             # 일별 통계 업데이트 (전역) - 실제 captcha_type 사용
             update_daily_api_stats(captcha_type, True, 0)
             
-            # 사용자별 일별 통계 업데이트 - 실제 captcha_type 사용
-            update_daily_api_stats_by_key(
-                user_id=api_key_info['user_id'],
-                api_key=x_api_key,
-                api_type=captcha_type,  # 실제 결정된 captcha_type 사용
-                response_time=0,
-                is_success=True
-            )
+            # 사용자별 일별 통계는 log_request에서 자동으로 처리됨
             
             print(f"📝 [/api/next-captcha] 로그 및 통계 저장 완료")
     except Exception as e:
