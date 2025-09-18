@@ -31,6 +31,15 @@ FROM python:3.9-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# Datadog APM 기본값 설정 (K8s에서 덮어쓰기 가능)
+ENV DD_ENV=production
+ENV DD_SERVICE=captcha-api-backend
+ENV DD_VERSION=1.0.0
+ENV DD_RUNTIME_METRICS_ENABLED=true
+ENV DD_LOGS_INJECTION=true
+ENV DD_TRACE_SAMPLE_RATE=1
+ENV DD_PROFILING_ENABLED=false
+ENV DD_TRACE_AGENT_URL=http://datadog-agent.default.svc.cluster.local:8126
 
 WORKDIR /app
 

@@ -460,19 +460,30 @@ def next_captcha(
     else:
         print("🛡️ 모바일 환경 감지: behavior_data_score MongoDB 저장 건너뜀")
 
-    # 체크박스 시도 횟수 추적 및 봇 차단 로직
-    is_low_score = confidence_score <= 9
-    session_data = increment_checkbox_attempts(checkbox_session_id, is_low_score=is_low_score, ttl=300)
+    # 봇 탐지 및 세션 상태 관리 (보안 강화)
+    is_bot_suspected = confidence_score >= 91
+    session_result = increment_checkbox_attempts(checkbox_session_id, is_bot_suspected=is_bot_suspected, ttl=300)
     
-    if session_data and session_data.get("is_blocked", False):
-        print(f"🚫 봇 차단: 세션 {checkbox_session_id}, 낮은 점수 시도 횟수: {session_data.get('low_score_attempts', 0)}")
+    # 차단된 세션 처리
+    if session_result.get("is_blocked", False):
+        print(f"🚫 봇 차단: 세션 {checkbox_session_id}")
         return {
-            "message": "Session blocked due to repeated low confidence scores",
+            "message": "봇으로 의심됩니다. 다시 확인해주세요.",
             "status": "blocked",
-            "session_id": checkbox_session_id,
-            "is_blocked": True,
-            "confidence_score": confidence_score,
-            "low_score_attempts": session_data.get("low_score_attempts", 0),
+            "is_disabled": True,
+            "error_message": "봇으로 의심됩니다. 다시 확인해주세요.",
+            "captcha_type": "",
+            "next_captcha": "",
+            "captcha_token": None
+        }
+    
+    # 봇 의심 상태 처리
+    if session_result.get("status") == "bot_suspected":
+        print(f"⚠️ 봇 의심: 세션 {checkbox_session_id}")
+        return {
+            "message": "봇으로 의심됩니다. 다시 확인해주세요.",
+            "status": "bot_suspected",
+            "error_message": "봇으로 의심됩니다. 다시 확인해주세요.",
             "captcha_type": "",
             "next_captcha": "",
             "captcha_token": None
@@ -528,25 +539,21 @@ def next_captcha(
     payload: Dict[str, Any] = {
         "message": "Behavior analysis completed",
         "status": "success",
-        "confidence_score": confidence_score,
         "captcha_type": captcha_type,
         "next_captcha": next_captcha_value,
         "captcha_token": captcha_token,
         "behavior_data_received": len(str(behavior_data)) > 0,
         "ml_service_used": ML_SERVICE_USED,
-        "is_bot_detected": is_bot if ML_SERVICE_USED else None,
         "session_id": checkbox_session_id,
-        "is_blocked": False,
-        "attempts": session_data.get("attempts", 0) if session_data else 0,
-        "low_score_attempts": session_data.get("low_score_attempts", 0) if session_data else 0
+        "is_blocked": False
+        # 보안상 민감한 정보 제거: confidence_score, attempts, low_score_attempts, is_bot_detected
     }
     try:
         preview = {
             "captcha_type": captcha_type,
             "next_captcha": next_captcha_value,
-            "confidence_score": confidence_score,
             "ml_service_used": ML_SERVICE_USED,
-            "is_bot_detected": is_bot if ML_SERVICE_USED else None,
+            # 보안상 민감한 정보 제거: confidence_score, is_bot_detected
         }
         print(f"📦 [/api/next-captcha] response: {json.dumps(preview, ensure_ascii=False)}")
     except Exception:
